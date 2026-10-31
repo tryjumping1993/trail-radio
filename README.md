@@ -2,7 +2,7 @@
 
 An unofficial fan-made companion inspired by [Big Walk](https://bigwalk.game/) by House House.
 
-A small push-to-talk group radio for Android and the web. The host keeps the channel open and grants it to one speaker at a time. Audio is sent to group members whose latest location is within about 1,500 feet of the speaker. Everyone needs an internet connection, microphone and location permissions. The host must remain online; GPS and peer-to-peer connectivity can vary by device and network. This is not an emergency communications tool.
+A small push-to-talk group radio for Android and the web. The host keeps the channel open and grants it to one speaker at a time. Audio is sent to group members whose latest location is within about 1,500 feet of the speaker. Everyone needs an internet connection, microphone and location permissions. An ongoing Android notification and foreground service keep an active group listening when the app is backgrounded or the screen is off. Android may ask to allow unrestricted battery use so Doze does not pause the connection. Leaving the group stops the service; remaining connected uses additional battery. The host must remain online; GPS and peer-to-peer connectivity can vary by device and network. This is not an emergency communications tool.
 
 ## Android
 

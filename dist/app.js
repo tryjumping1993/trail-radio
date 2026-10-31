@@ -4,7 +4,7 @@
   const RANGE = 457.2, FRESH = 30000;
   let mode = new URL(location.href).searchParams.has('room') ? 'join' : 'host';
   let peer, hostConn, localStream, watchId, roomId, selfId, selfName, groupName, isHost = false;
-  let roster = {}, connections = {}, calls = {}, floor = null, held = false, active = false, lastPosition = null, locationTimer, holdTimer;
+  let roster = {}, connections = {}, calls = {}, floor = null, held = false, active = false, nativeSession = false, lastPosition = null, locationTimer, holdTimer;
   const msg = text => $('message').textContent = text || '';
   // Android can resize the WebView after a field receives focus when its keyboard opens.
   let focusScrollTimer;
@@ -146,10 +146,10 @@
   $('talk').addEventListener('keyup',e=>{if(e.key===' '||e.key==='Enter') release();});
   window.addEventListener('blur',release); document.addEventListener('visibilitychange',()=>{if(document.hidden) release();});
   function enter() {
-    active=true; document.body.classList.add('is-connected'); $('setup').hidden=true; $('connected').hidden=false; $('crew-details').hidden=false; $('room-code').textContent=roomId; $('connection-status').textContent='ON THE AIR'; msg(''); render(); window.scrollTo?.(0,0);
+    active=true; if (nativeSession) window.TrailRadioNative.radioConnected(groupName); document.body.classList.add('is-connected'); $('setup').hidden=true; $('connected').hidden=false; $('crew-details').hidden=false; $('room-code').textContent=roomId; $('connection-status').textContent='ON THE AIR'; msg(''); render(); window.scrollTo?.(0,0);
   }
   function cleanup() {
-    release(); active=false; document.body.classList.remove('is-connected'); clearInterval(locationTimer); if(watchId!=null) navigator.geolocation.clearWatch(watchId); watchId=null;
+    release(); active=false; if(nativeSession) { nativeSession=false; window.TrailRadioNative.stopRadioSession(); } document.body.classList.remove('is-connected'); clearInterval(locationTimer); if(watchId!=null) navigator.geolocation.clearWatch(watchId); watchId=null;
     Object.values(calls).forEach(x=>x.call.close()); calls={}; localStream?.getTracks().forEach(t=>t.stop()); localStream=null;
     peer?.destroy(); peer=null; hostConn=null; connections={}; roster={}; floor=null; lastPosition=null; selfId=null;
     $('setup').hidden=false; $('connected').hidden=true; $('crew-details').hidden=true; $('crew-details').open=false; $('start').disabled=false; updateScreen();
@@ -170,6 +170,22 @@
       try {window.TrailRadioNative.requestPhonePermissions();} catch(error) {delete window.trailRadioPermissionResult; reject(error);}
     });
   }
+  function startNativeSession() {
+    if (!window.TrailRadioNative) return Promise.resolve();
+    return new Promise((resolve,reject)=>{
+      window.radioServiceStarted=ok=>{
+        delete window.radioServiceStarted;
+        if(ok) {nativeSession=true; resolve();}
+        else {const error=new Error('Background radio could not start'); error.name='RadioServiceError'; reject(error);}
+      };
+      try {window.TrailRadioNative.startRadioSession();} catch(error) {delete window.radioServiceStarted; reject(error);}
+    });
+  }
+  window.radioNativeLocation=(lat,lon,time)=>{
+    if (!nativeSession || !Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(time) || lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
+    if (!lastPosition || time >= lastPosition.time) {lastPosition={lat,lon,time}; sendPosition();}
+  };
+  window.radioServiceStopped=()=>{cleanup(); msg('The background radio stopped. Start or join the group again.');};
   function getLocation() {return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,timeout:20000,maximumAge:10000}));}
   $('setup-form').onsubmit=async e=>{
     e.preventDefault(); if(!window.Peer){msg('The radio network could not load. Check your internet connection and try again.');return;}
@@ -181,6 +197,8 @@
     let stage='permissions';
     try {
       await requestPhonePermissions();
+      stage='background';
+      await startNativeSession();
       stage='microphone';
       localStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false}); localStream.getAudioTracks().forEach(t=>t.enabled=false);
       stage='location';
@@ -188,7 +206,7 @@
       stage='network';
       peer=isHost?new Peer(roomId):new Peer();
       peer.on('open',id=>{
-        selfId=id; watchId=navigator.geolocation.watchPosition(p=>{lastPosition={lat:p.coords.latitude,lon:p.coords.longitude,time:Date.now()}; sendPosition();},()=>{lastPosition=null; release(); sendPosition(); msg('Location unavailable. Enable location to use the radio.');},{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
+        selfId=id; watchId=navigator.geolocation.watchPosition(p=>{lastPosition={lat:p.coords.latitude,lon:p.coords.longitude,time:Date.now()}; sendPosition();},()=>{if(nativeSession && document.hidden) return; lastPosition=null; release(); sendPosition(); msg('Location unavailable. Enable location to use the radio.');},{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
         locationTimer=setInterval(()=>{if(!position()) release(); sendPosition(); refreshLocation();},10000);
         if(isHost){roster[selfId]={name:selfName,pos:position(),host:true}; enter();}
         else {hostConn=peer.connect(roomId,{reliable:true}); hostConn.on('data',handleClientData); hostConn.on('close',()=>{cleanup();msg('The host went offline. Ask them to start a new group.');}); hostConn.on('error',()=>{cleanup();msg('Could not reach the host. Check the code and try again.');});}
@@ -200,11 +218,12 @@
       cleanup();
       const denied=err.code===1||err.name==='NotAllowedError'||err.name==='PhonePermissionDenied';
       if (window.TrailRadioNative && denied && stage!=='network') $('permission-settings').hidden=false;
-      if (err.name==='PhonePermissionDenied') msg('Allow microphone and location for Big Walk Radio in your phone settings, then try again.');
+      if (err.name==='RadioServiceError') msg('Could not keep the radio running. Check your microphone and location settings, then try again.');
+      else if (err.name==='PhonePermissionDenied') msg('Allow microphone and location for Big Walk Radio in your phone settings, then try again.');
       else if (stage==='microphone') msg(denied?'Microphone access was blocked. Check the app’s microphone permission and try again.':'Could not start the microphone. Check that another app is not using it, then try again.');
       else if (stage==='location') msg(denied?'Location access was blocked. Check the app’s location permission and try again.':'Could not get your location. Turn on location services and try again, preferably outdoors.');
       else msg(denied?'Allow microphone and location access in your browser settings, then try again.':'Could not start the radio. Check your connection and try again.');
     }
   };
-  window.addEventListener('pagehide',()=>{release(); peer?.destroy();});
+  window.addEventListener('pagehide',()=>{release(); if(!window.TrailRadioNative) peer?.destroy();});
 })();

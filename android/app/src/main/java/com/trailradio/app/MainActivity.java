@@ -2,46 +2,41 @@ package com.trailradio.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
-import android.os.Bundle;
 import android.os.Build;
-import android.view.WindowInsets;
-import android.view.ViewGroup;
-import android.widget.FrameLayout;
+import android.os.Bundle;
+import android.os.PowerManager;
 import android.provider.Settings;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.webkit.GeolocationPermissions;
-import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
-import android.webkit.WebChromeClient;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
-import android.webkit.WebViewClient;
-import java.io.IOException;
-import java.util.Arrays;
+import android.widget.FrameLayout;
+import android.widget.Toast;
 import java.util.ArrayList;
 
 public class MainActivity extends Activity {
     private WebView web;
+    private RadioRuntime runtime;
     private UpdateManager updates;
     private PermissionRequest microphoneRequest;
     private GeolocationPermissions.Callback locationCallback;
     private String locationOrigin;
-    private static final int MIC_REQUEST = 101, LOCATION_REQUEST = 102, PHONE_PERMISSIONS_REQUEST = 104;
-    private static final String ORIGIN = "https://trailradio.local";
+    private static final int MIC_REQUEST = 101, LOCATION_REQUEST = 102, PHONE_PERMISSIONS_REQUEST = 104, NOTIFICATION_REQUEST = 105;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         updates = new UpdateManager(this);
-        web = new WebView(this);
+        runtime = RadioRuntime.get(this);
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(0xffe8b95f);
-        root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        runtime.attach(this, root);
+        web = runtime.web();
         if (Build.VERSION.SDK_INT >= 35) {
-            // Android 15 draws behind system bars. Keep the entire web surface inside
-            // the safe area while still forwarding insets so the keyboard can resize it.
             root.setOnApplyWindowInsetsListener((view, insets) -> {
                 android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
                 int keyboardBottom = insets.getInsets(WindowInsets.Type.ime()).bottom;
@@ -50,57 +45,23 @@ public class MainActivity extends Activity {
             });
         }
         setContentView(root);
-        web.getSettings().setJavaScriptEnabled(true);
-        web.getSettings().setDomStorageEnabled(true);
-        web.getSettings().setGeolocationEnabled(true);
-        web.getSettings().setMediaPlaybackRequiresUserGesture(false);
-        web.addJavascriptInterface(new ShareBridge(), "TrailRadioNative");
-        web.setWebViewClient(new WebViewClient() {
-            @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                Uri uri = request.getUrl();
-                if (!"https".equals(uri.getScheme()) || !"trailradio.local".equals(uri.getHost())) return null;
-                String path = uri.getPath();
-                if (path == null || path.equals("/")) path = "/index.html";
-                if (!Arrays.asList("/index.html", "/style.css", "/app.js").contains(path)) return new WebResourceResponse("text/plain", "UTF-8", null);
-                String type = path.endsWith(".html") ? "text/html" : path.endsWith(".css") ? "text/css" : "text/javascript";
-                try { return new WebResourceResponse(type, "UTF-8", getAssets().open(path.substring(1))); }
-                catch (IOException e) { return new WebResourceResponse("text/plain", "UTF-8", null); }
-            }
-            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                if ("trailradio.local".equals(request.getUrl().getHost())) return false;
-                try { startActivity(new Intent(Intent.ACTION_VIEW, request.getUrl())); } catch (Exception ignored) { }
-                return true;
-            }
-        });
-        web.setWebChromeClient(new WebChromeClient() {
-            @Override public void onPermissionRequest(PermissionRequest request) {
-                if (!TrustedOrigin.matches(request.getOrigin() == null ? null : request.getOrigin().toString()) || !Arrays.asList(request.getResources()).contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) { request.deny(); return; }
-                runOnUiThread(() -> {
-                    if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
-                    else { microphoneRequest = request; requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MIC_REQUEST); }
-                });
-            }
-            @Override public void onPermissionRequestCanceled(PermissionRequest request) { if (microphoneRequest == request) microphoneRequest = null; }
-            @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
-                if (!TrustedOrigin.matches(origin)) { callback.invoke(origin, false, false); return; }
-                if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) callback.invoke(origin, true, false);
-                else { locationOrigin = origin; locationCallback = callback; requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, LOCATION_REQUEST); }
-            }
-        });
-        openIntent(getIntent());
+        if (!runtime.hasSession()) runtime.load(getIntent());
         updates.start();
     }
-    @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); openIntent(intent); }
-    private void openIntent(Intent intent) {
-        Uri data = intent.getData();
-        String room = data == null ? null : data.getQueryParameter("room");
-        web.loadUrl(ORIGIN + "/index.html" + (room != null && room.matches("tr-[a-f0-9]{16}") ? "?room=" + room : ""));
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (!runtime.hasSession()) runtime.load(intent);
+        else if (intent.getData() != null) Toast.makeText(this, "Leave your current group before joining another.", Toast.LENGTH_LONG).show();
     }
+    void requestWebMicrophone(PermissionRequest request) { microphoneRequest = request; requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MIC_REQUEST); }
+    void cancelWebMicrophone(PermissionRequest request) { if (microphoneRequest == request) microphoneRequest = null; }
+    void requestWebLocation(String origin, GeolocationPermissions.Callback callback) { locationOrigin = origin; locationCallback = callback; requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, LOCATION_REQUEST); }
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(code, permissions, results);
-        if (code == PHONE_PERMISSIONS_REQUEST) {
-            deliverPhonePermissionResult();
-        } else if (code == MIC_REQUEST && microphoneRequest != null) {
+        if (code == PHONE_PERMISSIONS_REQUEST) runtime.phonePermissionResult(hasPhonePermissions());
+        else if (code == NOTIFICATION_REQUEST) startRadioService();
+        else if (code == MIC_REQUEST && microphoneRequest != null) {
             if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) microphoneRequest.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE}); else microphoneRequest.deny();
             microphoneRequest = null;
         } else if (code == LOCATION_REQUEST && locationCallback != null) {
@@ -117,32 +78,52 @@ public class MainActivity extends Activity {
         boolean location = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
         return microphone && location;
     }
-    private void deliverPhonePermissionResult() {
-        if (isFinishing() || isDestroyed()) return;
-        web.evaluateJavascript("window.trailRadioPermissionResult && window.trailRadioPermissionResult(" + hasPhonePermissions() + ")", null);
+    void requestPhonePermissions() {
+        ArrayList<String> missing = new ArrayList<>();
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) missing.add(Manifest.permission.RECORD_AUDIO);
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            missing.add(Manifest.permission.ACCESS_FINE_LOCATION);
+            missing.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+        }
+        if (missing.isEmpty()) runtime.phonePermissionResult(true);
+        else requestPermissions(missing.toArray(new String[0]), PHONE_PERMISSIONS_REQUEST);
     }
-    private class ShareBridge {
-        @JavascriptInterface public void requestPhonePermissions() {
-            runOnUiThread(() -> {
-                ArrayList<String> missing = new ArrayList<>();
-                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) missing.add(Manifest.permission.RECORD_AUDIO);
-                if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                    missing.add(Manifest.permission.ACCESS_FINE_LOCATION);
-                    missing.add(Manifest.permission.ACCESS_COARSE_LOCATION);
-                }
-                if (missing.isEmpty()) deliverPhonePermissionResult();
-                else requestPermissions(missing.toArray(new String[0]), PHONE_PERMISSIONS_REQUEST);
-            });
-        }
-        @JavascriptInterface public void openAppSettings() {
-            runOnUiThread(() -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))));
-        }
-        @JavascriptInterface public void checkForUpdates() { updates.check(true); }
-        @JavascriptInterface public void shareInvite(String text) {
-            if (text == null || text.length() > 1000) return;
-            runOnUiThread(() -> { Intent send = new Intent(Intent.ACTION_SEND); send.setType("text/plain"); send.putExtra(Intent.EXTRA_TEXT, text); startActivity(Intent.createChooser(send, "Invite your crew")); });
-        }
+    void requestRadioService() {
+        if (!hasPhonePermissions()) { runtime.serviceStarted(false); return; }
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED && !getPreferences(MODE_PRIVATE).getBoolean("asked_radio_notifications", false)) {
+            getPreferences(MODE_PRIVATE).edit().putBoolean("asked_radio_notifications", true).apply();
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_REQUEST);
+        } else startRadioService();
     }
+    private void startRadioService() {
+        runtime.markSessionRequested();
+        try { startForegroundService(new Intent(this, RadioService.class)); }
+        catch (RuntimeException error) { runtime.serviceStarted(false); }
+    }
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && runtime != null && runtime.isConnected()) maybeRequestBatteryExemption();
+    }
+    void maybeRequestBatteryExemption() {
+        PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
+        if (!hasWindowFocus() || power.isIgnoringBatteryOptimizations(getPackageName()) || getPreferences(MODE_PRIVATE).getBoolean("asked_radio_battery", false)) return;
+        getPreferences(MODE_PRIVATE).edit().putBoolean("asked_radio_battery", true).apply();
+        new AlertDialog.Builder(this).setTitle("Keep listening with the screen off")
+            .setMessage("Android can pause the radio connection to save battery. Allow unrestricted battery use to keep your group connected while the screen is off.")
+            .setNegativeButton("Not now", null).setPositiveButton("Continue", (dialog, which) -> {
+                try { startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()))); }
+                catch (RuntimeException error) { Toast.makeText(this, "You can allow unrestricted battery use in Android settings.", Toast.LENGTH_LONG).show(); }
+            }).show();
+    }
+    void openAppSettings() { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))); }
+    void checkForUpdates() { updates.check(true); }
+    void shareInvite(String text) { Intent send = new Intent(Intent.ACTION_SEND); send.setType("text/plain"); send.putExtra(Intent.EXTRA_TEXT, text); startActivity(Intent.createChooser(send, "Invite your crew")); }
     @Override public void onBackPressed() { if (web.canGoBack()) web.goBack(); else super.onBackPressed(); }
-    @Override protected void onDestroy() { updates.stop(); if (microphoneRequest != null) microphoneRequest.deny(); if (locationCallback != null) locationCallback.invoke(locationOrigin, false, false); web.destroy(); super.onDestroy(); }
+    @Override protected void onDestroy() {
+        updates.stop();
+        if (microphoneRequest != null) microphoneRequest.deny();
+        if (locationCallback != null) locationCallback.invoke(locationOrigin, false, false);
+        runtime.detach(this);
+        super.onDestroy();
+    }
 }

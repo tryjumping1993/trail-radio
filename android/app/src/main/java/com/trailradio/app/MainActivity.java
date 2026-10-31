@@ -6,6 +6,10 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Build;
+import android.view.WindowInsets;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.provider.Settings;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
@@ -32,7 +36,20 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         updates = new UpdateManager(this);
         web = new WebView(this);
-        setContentView(web);
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(0xffe8b95f);
+        root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        if (Build.VERSION.SDK_INT >= 35) {
+            // Android 15 draws behind system bars. Keep the entire web surface inside
+            // the safe area while still forwarding insets so the keyboard can resize it.
+            root.setOnApplyWindowInsetsListener((view, insets) -> {
+                android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                int keyboardBottom = insets.getInsets(WindowInsets.Type.ime()).bottom;
+                view.setPadding(safe.left, safe.top, safe.right, Math.max(safe.bottom, keyboardBottom));
+                return insets;
+            });
+        }
+        setContentView(root);
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
         web.getSettings().setGeolocationEnabled(true);

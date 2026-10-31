@@ -6,6 +6,18 @@
   let peer, hostConn, localStream, watchId, roomId, selfId, selfName, groupName, isHost = false;
   let roster = {}, connections = {}, calls = {}, floor = null, held = false, active = false, lastPosition = null, locationTimer, holdTimer;
   const msg = text => $('message').textContent = text || '';
+  // Android can resize the WebView after a field receives focus when its keyboard opens.
+  let focusScrollTimer;
+  function keepFocusedFieldVisible() {
+    clearTimeout(focusScrollTimer);
+    focusScrollTimer=setTimeout(()=>{
+      const field=document.activeElement;
+      if (field && /^(INPUT|TEXTAREA|SELECT)$/.test(field.tagName)) field.scrollIntoView({block:'center',inline:'nearest'});
+    },80);
+  }
+  document.addEventListener('focusin',keepFocusedFieldVisible);
+  window.addEventListener('resize',keepFocusedFieldVisible);
+  window.visualViewport?.addEventListener('resize',keepFocusedFieldVisible);
   const safeSend = (conn, data) => { if (conn && conn.open) { try { conn.send(data); } catch (_) {} } };
   const clean = text => String(text || '').trim().slice(0, 32);
   function distance(a,b) {
@@ -134,13 +146,13 @@
   $('talk').addEventListener('keyup',e=>{if(e.key===' '||e.key==='Enter') release();});
   window.addEventListener('blur',release); document.addEventListener('visibilitychange',()=>{if(document.hidden) release();});
   function enter() {
-    active=true; document.body.classList.add('is-connected'); $('setup').hidden=true; $('connected').hidden=false; $('room-code').textContent=roomId; $('connection-status').textContent='ON THE AIR'; msg(''); render();
+    active=true; document.body.classList.add('is-connected'); $('setup').hidden=true; $('connected').hidden=false; $('crew-details').hidden=false; $('room-code').textContent=roomId; $('connection-status').textContent='ON THE AIR'; msg(''); render(); window.scrollTo?.(0,0);
   }
   function cleanup() {
     release(); active=false; document.body.classList.remove('is-connected'); clearInterval(locationTimer); if(watchId!=null) navigator.geolocation.clearWatch(watchId); watchId=null;
     Object.values(calls).forEach(x=>x.call.close()); calls={}; localStream?.getTracks().forEach(t=>t.stop()); localStream=null;
     peer?.destroy(); peer=null; hostConn=null; connections={}; roster={}; floor=null; lastPosition=null; selfId=null;
-    $('setup').hidden=false; $('connected').hidden=true; $('start').disabled=false; updateScreen();
+    $('setup').hidden=false; $('connected').hidden=true; $('crew-details').hidden=true; $('crew-details').open=false; $('start').disabled=false; updateScreen();
   }
   $('leave').onclick=()=>{cleanup(); msg('You left the group.');};
   $('copy').onclick=async()=>{

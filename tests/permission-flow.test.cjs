@@ -38,6 +38,10 @@ async function scenario(grant, failure) {
   assert.deepEqual(allowed.events.slice(0,3), ['phone-permissions','microphone','location'], 'phone permission precedes microphone and location');
   assert.equal(allowed.get('connected').hidden, false, 'granted access joins a hosted group');
   assert.equal(allowed.get('permission-settings').hidden, true);
+  assert.equal(allowed.get('crew-details').hidden, false, 'crew panel becomes available after joining');
+  allowed.get('leave').onclick();
+  assert.equal(allowed.get('crew-details').hidden, true, 'crew panel is hidden after leaving');
+  assert.equal(allowed.get('setup').hidden, false, 'group setup is restored after leaving');
   const denied = await scenario(false);
   assert.deepEqual(denied.events, ['phone-permissions'], 'denied phone permission never starts microphone or location');
   assert.equal(denied.get('permission-settings').hidden, false, 'settings action is offered after denial');

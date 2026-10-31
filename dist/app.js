@@ -166,10 +166,14 @@
     roomId=isHost?'tr-'+Array.from(crypto.getRandomValues(new Uint8Array(8)),x=>x.toString(16).padStart(2,'0')).join(''):clean($('code').value).toLowerCase();
     if(!/^tr-[a-f0-9]{16}$/.test(roomId)){msg('That group code doesn’t look right. Ask your host for a fresh invitation.');return;}
     groupName=isHost?(clean($('room-name').value)||'The Wanderers'):'Your group'; $('start').disabled=true; $('permission-settings').hidden=true; msg('Getting your microphone and location ready…');
+    let stage='permissions';
     try {
       await requestPhonePermissions();
+      stage='microphone';
       localStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false}); localStream.getAudioTracks().forEach(t=>t.enabled=false);
+      stage='location';
       const loc=await getLocation(); lastPosition={lat:loc.coords.latitude,lon:loc.coords.longitude,time:Date.now()};
+      stage='network';
       peer=isHost?new Peer(roomId):new Peer();
       peer.on('open',id=>{
         selfId=id; watchId=navigator.geolocation.watchPosition(p=>{lastPosition={lat:p.coords.latitude,lon:p.coords.longitude,time:Date.now()}; sendPosition();},()=>{lastPosition=null; release(); sendPosition(); msg('Location unavailable. Enable location to use the radio.');},{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
@@ -180,7 +184,15 @@
       peer.on('connection',conn=>isHost?hostConnection(conn):conn.close()); peer.on('call',incoming);
       peer.on('disconnected',()=>{if(active)msg('Radio network disconnected. Reconnecting…'); peer?.reconnect();});
       peer.on('error',err=>{const text=err.type==='peer-unavailable'?'Could not find that group. Make sure the host is online and check the code.':'Could not connect to the radio network. Please try again.'; cleanup();msg(text);});
-    } catch(err) {cleanup(); const denied=err.code===1||err.name==='NotAllowedError'||err.name==='PhonePermissionDenied'; if(denied && window.TrailRadioNative) { $('permission-settings').hidden=false; msg('Allow microphone and location for Big Walk Radio in your phone settings, then try again.'); } else msg(denied?'Allow microphone and location access in your browser settings, then try again.':'Could not get a microphone or fresh location. Check your device settings and try again.');}
+    } catch(err) {
+      cleanup();
+      const denied=err.code===1||err.name==='NotAllowedError'||err.name==='PhonePermissionDenied';
+      if (window.TrailRadioNative && denied && stage!=='network') $('permission-settings').hidden=false;
+      if (err.name==='PhonePermissionDenied') msg('Allow microphone and location for Big Walk Radio in your phone settings, then try again.');
+      else if (stage==='microphone') msg(denied?'Microphone access was blocked. Check the app’s microphone permission and try again.':'Could not start the microphone. Check that another app is not using it, then try again.');
+      else if (stage==='location') msg(denied?'Location access was blocked. Check the app’s location permission and try again.':'Could not get your location. Turn on location services and try again, preferably outdoors.');
+      else msg(denied?'Allow microphone and location access in your browser settings, then try again.':'Could not start the radio. Check your connection and try again.');
+    }
   };
   window.addEventListener('pagehide',()=>{release(); peer?.destroy();});
 })();

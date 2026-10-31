@@ -7,6 +7,7 @@ android {
         applicationId 'com.trailradio.app'
         minSdk 26
         targetSdk 35
+        testInstrumentationRunner 'com.trailradio.app.PermissionInstrumentation'
         versionCode = (System.getenv('TRAIL_VERSION_CODE') ?: '1').toInteger()
         versionName = (System.getenv('TRAIL_VERSION_NAME') ?: '1.0.0')
     }

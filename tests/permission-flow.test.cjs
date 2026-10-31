@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const code = fs.readFileSync('dist/app.js', 'utf8');
 
-async function scenario(grant) {
+async function scenario(grant, failure) {
   const events = [], elements = new Map();
   class Element {
     constructor() { this.hidden = false; this.disabled = false; this.value = ''; this.textContent = ''; this.firstChild = {textContent:''}; this.classList = {add(){}, remove(){}, toggle(){}}; }
@@ -14,8 +14,8 @@ async function scenario(grant) {
   get('name').value = 'Sunny'; get('room-name').value = 'The Crew';
   const window = {addEventListener(){}};
   const navigator = {
-    geolocation: {getCurrentPosition(resolve) { events.push('location'); resolve({coords:{latitude:0,longitude:0}}); }, watchPosition() {return 1;}, clearWatch() {}},
-    mediaDevices: {async getUserMedia() {events.push('microphone'); return {getAudioTracks:()=>[{enabled:false}], getTracks:()=>[]};}}
+    geolocation: {getCurrentPosition(resolve, reject) { events.push('location'); if (failure === 'location') reject({code:2}); else resolve({coords:{latitude:0,longitude:0}}); }, watchPosition() {return 1;}, clearWatch() {}},
+    mediaDevices: {async getUserMedia() {events.push('microphone'); if (failure === 'microphone') throw Object.assign(new Error('Audio unavailable'), {name:'NotReadableError'}); return {getAudioTracks:()=>[{enabled:false}], getTracks:()=>[]};}}
   };
   class Peer {
     constructor(id) {this.id = id; this.events={}; queueMicrotask(()=>this.events.open?.(id));}
@@ -45,5 +45,11 @@ async function scenario(grant) {
   assert.doesNotMatch(denied.get('message').textContent, /browser/i);
   denied.get('permission-settings').onclick();
   assert.equal(denied.events.at(-1), 'settings');
+  const micFailure = await scenario(true, 'microphone');
+  assert.match(micFailure.get('message').textContent, /could not start the microphone/i);
+  assert.equal(micFailure.get('permission-settings').hidden, true, 'hardware failure is not presented as denied phone permissions');
+  const locationFailure = await scenario(true, 'location');
+  assert.match(locationFailure.get('message').textContent, /could not get your location/i);
+  assert.equal(locationFailure.get('permission-settings').hidden, true, 'GPS failure is not presented as denied phone permissions');
   console.log('Phone permission flow checks passed.');
 })().catch(error=>{console.error(error); process.exitCode=1;});

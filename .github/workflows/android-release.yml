@@ -18,10 +18,12 @@ jobs:
       - name: Test update URL policy
         run: |
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/trail-policy-tests" | Out-Null
-          & "$env:JAVA_HOME/bin/javac.exe" -d "$env:RUNNER_TEMP/trail-policy-tests" android/app/src/main/java/com/trailradio/app/UpdatePolicy.java android/tests/UpdatePolicyTest.java
+          & "$env:JAVA_HOME/bin/javac.exe" -d "$env:RUNNER_TEMP/trail-policy-tests" android/app/src/main/java/com/trailradio/app/UpdatePolicy.java android/tests/UpdatePolicyTest.java android/app/src/main/java/com/trailradio/app/TrustedOrigin.java android/tests/TrustedOriginTest.java
           if ($LASTEXITCODE -ne 0) { throw 'Could not compile update tests.' }
           & "$env:JAVA_HOME/bin/java.exe" -cp "$env:RUNNER_TEMP/trail-policy-tests" com.trailradio.app.UpdatePolicyTest
           if ($LASTEXITCODE -ne 0) { throw 'Update policy tests failed.' }
+          & "$env:JAVA_HOME/bin/java.exe" -cp "$env:RUNNER_TEMP/trail-policy-tests" com.trailradio.app.TrustedOriginTest
+          if ($LASTEXITCODE -ne 0) { throw 'Trusted origin tests failed.' }
       - name: Build signed APK
         run: |
           $ErrorActionPreference = 'Stop'
@@ -29,7 +31,7 @@ jobs:
           $env:TRAIL_VERSION_CODE = '${{ github.run_number }}'
           if (-not $env:TRAIL_KEYSTORE -or -not (Test-Path -LiteralPath $env:TRAIL_KEYSTORE)) { throw 'Big Walk Radio signing key is missing from this runner.' }
           Push-Location android
-          try { ./gradlew.bat --no-daemon assembleRelease; if ($LASTEXITCODE -ne 0) { throw "Gradle failed: $LASTEXITCODE" } }
+          try { ./gradlew.bat --no-daemon assembleRelease assembleDebugAndroidTest; if ($LASTEXITCODE -ne 0) { throw "Gradle failed: $LASTEXITCODE" } }
           finally { Pop-Location }
           Copy-Item android/app/build/outputs/apk/release/app-release.apk Trail-Radio.apk
           Copy-Item Trail-Radio.apk Big-Walk-Radio.apk

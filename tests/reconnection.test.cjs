@@ -22,8 +22,9 @@ async function createScenario(mode, range='1500', saved=new Map()) {
   }
   class FakeDate extends Date { static now(){return now;} }
   class Element {
-    constructor(){this.hidden=false;this.disabled=false;this.value='';this.textContent='';this.firstChild={textContent:''};this.classList={add(){},remove(){},toggle(){}};}
-    addEventListener(){} setAttribute(){} remove(){}
+    constructor(){this.listeners={};this.hidden=false;this.disabled=false;this.value='';this.textContent='';this.firstChild={textContent:''};this.classList={add(){},remove(){},toggle(){}};}
+    addEventListener(name,fn){(this.listeners[name]||=[]).push(fn);} dispatch(name,e={}){(this.listeners[name]||[]).forEach(fn=>fn({preventDefault(){},pointerId:1,...e}));}
+    setPointerCapture(){} setAttribute(){} remove(){}
     replaceChildren(...c){this.children=c;} append(...c){this.children=[...(this.children||[]),...c];}
     requestSubmit(){return this.onsubmit?.({preventDefault(){}});}
   }
@@ -179,5 +180,15 @@ async function createScenario(mode, range='1500', saved=new Map()) {
   assert.equal(rehost.get('range-tag').textContent,'◉ 2,000 FT RANGE','with the same range');
   rehost.get('leave').onclick();
   assert.equal(JSON.parse(saved.get('trailRadioGroups')).length,0,'leaving forgets the group');
+  // Five quick presses switch the map flag; it reaches the host and the group's state.
+  const quiet=await createScenario('host');
+  const qp=quiet.peers[0]; qp.opened();
+  const qc=new (qp.connect('x').constructor)('guest-q'); qp.emit('connection',qc); qc.open=true; qc.emit('open'); qc.emit('data',{type:'hello',name:'Fern'});
+  const press=n=>{for(let k=0;k<n;k++) {quiet.get('talk').dispatch('pointerdown'); quiet.get('talk').dispatch('pointerup'); quiet.skip(150);}};
+  press(4); assert.equal(qc.sent.at(-1).roster[qp.id].hidden,false,'four presses change nothing');
+  quiet.skip(1000); press(5); assert.equal(qc.sent.at(-1).roster[qp.id].hidden,true,'five presses within a second');
+  quiet.skip(1000); press(5); assert.equal(qc.sent.at(-1).roster[qp.id].hidden,false,'and five more switch it back');
+  qc.emit('data',{type:'visibility',hidden:true}); assert.equal(qc.sent.at(-1).roster['guest-q'].hidden,true,'a guest can switch it too');
+  quiet.get('leave').onclick();
   console.log('Reconnection and background heartbeat checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

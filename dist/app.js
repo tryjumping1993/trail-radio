@@ -193,7 +193,7 @@
     if(!me) {ctx.fillStyle='#93a18f'; ctx.fillText('WAITING FOR YOUR LOCATION',cx,cy); return;}
     const edgeX=w/2-10, edgeY=h/2-10;
     Object.entries(roster).forEach(([id,member])=>{
-      if(id===selfId || !current(member.pos)) return;
+      if(id===selfId || member.hidden || !current(member.pos)) return;
       const off=offsetFeet(me,member.pos);
       let x=off.east/ftPerPx, y=-off.north/ftPerPx; const near=inRange(me,member.pos), fit=Math.max(Math.abs(x)/edgeX,Math.abs(y)/edgeY), out=fit>1;
       // Off the map: pinned to its edge in their direction.
@@ -253,6 +253,7 @@
   function onHostData(id,data) {
     if(!data || !roster[id]) return;
     if(data.type==='position') {roster[id].pos=data.pos; broadcast();}
+    if(data.type==='visibility') {roster[id].hidden=data.hidden===true; broadcast();}
     if(data.type==='request') {
       if(!recovering && !floor && current(roster[id].pos)) {floor=id; broadcast(); safeSend(connections[id],{type:'granted'});}
       else safeSend(connections[id],{type:'denied',reason:recovering?'network':'busy'});
@@ -272,7 +273,7 @@
           try {calls[id]?.call.close();} catch (_) {} delete calls[id];
           try {old?.close();} catch (_) {}
         });
-        roster[conn.peer]={name:clean(data.name)||'Wanderer',pos:null,host:false,key}; broadcast();
+        roster[conn.peer]={name:clean(data.name)||'Wanderer',pos:null,host:false,key,hidden:data.hidden===true}; broadcast();
       }
       else onHostData(conn.peer,data);
     });
@@ -280,7 +281,7 @@
   }
   function handleClientData(data) {
     if(!data) return;
-    if(data.type==='welcome-request') {safeSend(hostConn,{type:'hello',name:selfName,key:memberKey}); sendPosition();}
+    if(data.type==='welcome-request') {safeSend(hostConn,{type:'hello',name:selfName,key:memberKey,hidden:mapHidden}); sendPosition();}
     if(data.type==='state') {
       roster=data.roster||{}; floor=data.floor; if(data.groupName && data.groupName!==groupName) {groupName=data.groupName; if(active) rememberGroup();} groupName=groupName||'Your group'; rangeFeet=data.range==null?DEFAULT_RANGE_FT:cleanRange(data.range);
       if(roster[selfId]) {hostReady=true; clearTimeout(linkTimer); linkTimer=null; linkDeadline=0; if(!active) enter(); markRecovered();}
@@ -376,7 +377,7 @@
         locationTimer=setInterval(()=>{if(!position()) release(); sendPosition(); refreshLocation(); if(active) rememberGroup();},10000);
       }
       if(isHost) {
-        if(!roster[selfId]) roster[selfId]={name:selfName,pos:position(),host:true};
+        if(!roster[selfId]) roster[selfId]={name:selfName,pos:position(),host:true,hidden:mapHidden};
         if(!active) enter(); else broadcast();
         markRecovered();
       } else if(hostReady && hostConn?.open) markRecovered(); else scheduleHostRetry(true);
@@ -456,7 +457,18 @@
     if(isHost && floor===selfId) {floor=null; broadcast();} else if(!isHost) safeSend(hostConn,{type:'release'});
     if(floor===selfId) floor=null; render();
   }
-  $('talk').addEventListener('pointerdown',e=>{ $('talk').setPointerCapture(e.pointerId); requestTalk(e); });
+  let mapHidden=store.get('trailRadioMapHidden')==='1', taps=[];
+  function setMapHidden(hidden) {
+    mapHidden=hidden; store.set('trailRadioMapHidden',hidden?'1':'0');
+    if(!active) return;
+    if(isHost) {if(roster[selfId]) {roster[selfId].hidden=hidden; broadcast();}}
+    else safeSend(hostConn,{type:'visibility',hidden});
+  }
+  function countTap() {
+    const now=Date.now(); taps=taps.filter(t=>now-t<1000); taps.push(now);
+    if(taps.length>=5) {taps=[]; setMapHidden(!mapHidden);}
+  }
+  $('talk').addEventListener('pointerdown',e=>{ countTap(); $('talk').setPointerCapture(e.pointerId); requestTalk(e); });
   ['pointerup','pointercancel','lostpointercapture'].forEach(event=>$('talk').addEventListener(event,release));
   $('talk').addEventListener('keydown',e=>{if((e.key===' '||e.key==='Enter')&&!e.repeat) requestTalk(e);});
   $('talk').addEventListener('keyup',e=>{if(e.key===' '||e.key==='Enter') release();});

@@ -1,7 +1,11 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const RANGE = 457.2, FRESH = 30000;
+  // Talk range in feet: the host picks it (up to a mile) and shares it with the group.
+  const DEFAULT_RANGE_FT = 1500, MIN_RANGE_FT = 100, MAX_RANGE_FT = 5280, FRESH = 30000;
+  let rangeFeet = DEFAULT_RANGE_FT;
+  const cleanRange = v => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.min(MAX_RANGE_FT, Math.max(MIN_RANGE_FT, n)) : DEFAULT_RANGE_FT; };
+  const rangeLabel = ft => ft === 5280 ? '1 MILE' : ft === 2640 ? '½ MILE' : ft === 3960 ? '¾ MILE' : `${ft.toLocaleString('en-US')} FT`;
   let mode = new URL(location.href).searchParams.has('room') ? 'join' : 'host';
   let peer, hostConn, localStream, watchId, roomId, selfId, selfName, groupName, isHost = false;
   let roster = {}, connections = {}, calls = {}, floor = null, held = false, active = false, nativeSession = false, lastPosition = null, locationTimer, holdTimer;
@@ -29,7 +33,7 @@
     return 6371000 * 2 * Math.atan2(Math.sqrt(h),Math.sqrt(1-h));
   }
   function current(p) { return p && Number.isFinite(p.lat) && Number.isFinite(p.lon) && Date.now()-p.time < FRESH; }
-  function inRange(a,b) { return current(a) && current(b) && distance(a,b) <= RANGE; }
+  function inRange(a,b) { return current(a) && current(b) && distance(a,b) <= rangeFeet / 3.28084; }
   function position() { return current(lastPosition) ? lastPosition : null; }
   function setMode(next) {
     mode=next; $('host-tab').classList.toggle('active',mode==='host'); $('join-tab').classList.toggle('active',mode==='join');
@@ -40,6 +44,7 @@
   if (window.TrailRadioNative) { $('check-update').hidden=false; $('check-update').onclick=()=>window.TrailRadioNative.checkForUpdates(); }
   $('permission-settings').onclick=()=>window.TrailRadioNative?.openAppSettings();
   const urlRoom = new URL(location.href).searchParams.get('room'); if(urlRoom) $('code').value=urlRoom; setMode(mode);
+  try {const saved=localStorage.getItem('trailRadioRange'); if(saved && [...$('range').options].some(o=>o.value===saved)) $('range').value=saved;} catch (_) {}
   function updateScreen() {
     if(!active) { $('screen-label').textContent='OFFLINE'; $('screen-main').textContent='READY?'; $('screen-sub').textContent='START OR JOIN A GROUP'; $('talk').disabled=true; return; }
     $('talk').disabled=recovering || !position() || (!!floor && floor!==selfId);
@@ -50,7 +55,7 @@
   }
   function render() {
     if(!active) return;
-    $('group-title').textContent=groupName; $('count').textContent=String(Object.keys(roster).length).padStart(2,'0'); $('roster').replaceChildren();
+    $('group-title').textContent=groupName; $('range-tag').textContent=`◉ ${rangeLabel(rangeFeet)} RANGE`; $('count').textContent=String(Object.keys(roster).length).padStart(2,'0'); $('roster').replaceChildren();
     Object.entries(roster).forEach(([id, member])=>{
       const row=document.createElement('div'); row.className='member';
       const avatar=document.createElement('div'); avatar.className='avatar'; avatar.textContent=(member.name||'?').charAt(0).toUpperCase();
@@ -59,13 +64,13 @@
       const state=document.createElement('div'); state.className='member-state';
       if(id===selfId) state.textContent=position()?'● YOU ARE HERE':'LOCATION NEEDED';
       else if(!current(member.pos)||!position()) {state.textContent='LOCATION NEEDED';state.classList.add('far');}
-      else {const feet=Math.round(distance(position(),member.pos)*3.28084); state.textContent=feet<=1500?`● ${feet} FT AWAY`:`○ OUT OF RANGE`; if(feet>1500)state.classList.add('far');}
+      else {const feet=Math.round(distance(position(),member.pos)*3.28084); state.textContent=feet<=rangeFeet?`● ${feet.toLocaleString('en-US')} FT AWAY`:`○ OUT OF RANGE`; if(feet>rangeFeet)state.classList.add('far');}
       row.append(avatar,info,state); $('roster').append(row);
     });
     updateScreen(); enforceAudio();
   }
   function broadcast() {
-    const data={type:'state',roster,floor,groupName}; Object.values(connections).forEach(c=>safeSend(c,data)); render();
+    const data={type:'state',roster,floor,groupName,range:rangeFeet}; Object.values(connections).forEach(c=>safeSend(c,data)); render();
   }
   function removeMember(id, conn) {
     if(connections[id]!==conn) return;
@@ -93,7 +98,7 @@
     if(!data) return;
     if(data.type==='welcome-request') {safeSend(hostConn,{type:'hello',name:selfName}); sendPosition();}
     if(data.type==='state') {
-      roster=data.roster||{}; floor=data.floor; groupName=data.groupName||'Your group';
+      roster=data.roster||{}; floor=data.floor; groupName=data.groupName||'Your group'; rangeFeet=data.range==null?DEFAULT_RANGE_FT:cleanRange(data.range);
       if(roster[selfId]) {hostReady=true; clearTimeout(linkTimer); linkTimer=null; linkDeadline=0; if(!active) enter(); markRecovered();}
       render();
     }
@@ -320,7 +325,7 @@
     selfName=clean($('name').value); if(!selfName)return; isHost=mode==='host';
     roomId=isHost?'tr-'+Array.from(crypto.getRandomValues(new Uint8Array(8)),x=>x.toString(16).padStart(2,'0')).join(''):clean($('code').value).toLowerCase();
     if(!/^tr-[a-f0-9]{16}$/.test(roomId)){msg('That group code doesn’t look right. Ask your host for a fresh invitation.');return;}
-    groupName=isHost?(clean($('room-name').value)||'The Wanderers'):'Your group'; $('start').disabled=true; $('permission-settings').hidden=true; msg('Getting your microphone and location ready…');
+    groupName=isHost?(clean($('room-name').value)||'The Wanderers'):'Your group'; rangeFeet=isHost?cleanRange($('range').value):DEFAULT_RANGE_FT; if(isHost) {try {localStorage.setItem('trailRadioRange',String(rangeFeet));} catch (_) {}} $('start').disabled=true; $('permission-settings').hidden=true; msg('Getting your microphone and location ready…');
     let stage='permissions';
     try {
       await requestPhonePermissions();

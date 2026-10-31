@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('dist/app.js', 'utf8');
 
-async function createScenario(mode) {
+async function createScenario(mode, range='1500') {
   let now = 100000, nextTimer = 1, watches = 0;
   const timers = new Map(), elements = new Map(), peers = [], events = [], listeners = {};
   function setTimer(fn, delay, interval=false) { const id=nextTimer++; timers.set(id,{fn,at:now+Number(delay||0),interval:interval?Number(delay):0}); return id; }
@@ -26,7 +26,7 @@ async function createScenario(mode) {
     addEventListener(){} setAttribute(){} replaceChildren(){} append(){} remove(){}
   }
   const get=id=>{if(!elements.has(id)) elements.set(id,new Element());return elements.get(id);};
-  get('name').value='Sunny'; get('room-name').value='Crew'; get('code').value='tr-0123456789abcdef';
+  get('name').value='Sunny'; get('room-name').value='Crew'; get('code').value='tr-0123456789abcdef'; get('range').value=range;
   const document={getElementById:get,createElement:()=>new Element(),addEventListener(){},body:new Element(),hidden:false};
   const window={addEventListener(name,fn){listeners[name]=fn;},scrollTo(){}};
   class FakeConnection {
@@ -125,5 +125,21 @@ async function createScenario(mode) {
   assert.equal(missing.get('setup').hidden,false,'an unreachable initial invite eventually returns to setup');
   assert.match(missing.get('message').textContent,/check the code/i);
   assert.equal(missing.events.includes('service-stop'),true,'failed initial join stops the foreground service');
+  const mile=await createScenario('host','5280');
+  mile.peers[0].opened();
+  assert.equal(mile.get('range-tag').textContent,'◉ 1 MILE RANGE','the host picks the talk range');
+  const far=mile.peers[0]; const guestLink=new (far.connect('x').constructor)('guest-9');
+  far.emit('connection',guestLink); guestLink.open=true; guestLink.emit('open'); guestLink.emit('data',{type:'hello',name:'Fern'});
+  assert.equal(guestLink.sent.at(-1).range,5280,'the range is shared with the group');
+  mile.get('leave').onclick();
+
+  const ranged=await createScenario('join');
+  const rp=ranged.peers[0]; rp.opened(); ranged.advance(0);
+  const rl=rp.links[0]; rl.open=true;
+  const state=range=>rl.emit('data',{type:'state',groupName:'Crew',floor:null,range,roster:{[rp.id]:{name:'Sunny',pos:{lat:1,lon:1,time:100000},host:false}}});
+  state(5280); assert.equal(ranged.get('range-tag').textContent,'◉ 1 MILE RANGE','guests use the host range');
+  state(99999); assert.equal(ranged.get('range-tag').textContent,'◉ 1 MILE RANGE','the range never exceeds a mile');
+  state(undefined); assert.equal(ranged.get('range-tag').textContent,'◉ 1,500 FT RANGE','older hosts keep 1,500 ft');
+  ranged.get('leave').onclick();
   console.log('Reconnection and background heartbeat checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

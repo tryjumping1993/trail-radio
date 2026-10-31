@@ -35,6 +35,76 @@
   function current(p) { return p && Number.isFinite(p.lat) && Number.isFinite(p.lon) && Date.now()-p.time < FRESH; }
   function inRange(a,b) { return current(a) && current(b) && distance(a,b) <= rangeFeet / 3.28084; }
   function position() { return current(lastPosition) ? lastPosition : null; }
+  // The radio screen's waveform: the speaker the group hears (or your own microphone while you
+  // talk), drawn from Web Audio analysers. A flat line while the channel is quiet.
+  let audioCtx=null, localAnalyser=null, waveFrame=null;
+  function startAudio() {
+    try {
+      const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
+      if(!audioCtx) audioCtx=new AC(); if(audioCtx.state==='suspended') audioCtx.resume().catch(()=>{});
+    } catch (_) {}
+    if(!waveFrame) drawWave();
+  }
+  function analyserFor(stream) {
+    if(!audioCtx || !stream) return null;
+    try {const node=audioCtx.createAnalyser(); node.fftSize=1024; audioCtx.createMediaStreamSource(stream).connect(node); return node;} catch (_) {return null;}
+  }
+  function sizeCanvas(canvas) {
+    const ratio=window.devicePixelRatio||1, w=Math.round((canvas.clientWidth||0)*ratio), h=Math.round((canvas.clientHeight||0)*ratio);
+    if(!w || !h) return null;
+    if(canvas.width!==w || canvas.height!==h) {canvas.width=w; canvas.height=h;}
+    const ctx=canvas.getContext?.('2d'); if(ctx) ctx.setTransform(ratio,0,0,ratio,0,0);
+    return ctx ? {ctx,w:w/ratio,h:h/ratio} : null;
+  }
+  function audibleAnalyser() {
+    if(!active || !floor) return null;
+    if(floor===selfId) return held ? localAnalyser : null;
+    const entry=calls[floor]; return entry && !entry.outgoing && entry.audio && !entry.audio.muted ? entry.analyser : null;
+  }
+  let waveData=null;
+  function drawWave() {
+    waveFrame=null;
+    const raf=window.requestAnimationFrame; if(!raf) return;
+    const canvas=$('wave'), area=canvas && sizeCanvas(canvas);
+    if(area) {
+      const {ctx,w,h}=area, analyser=audibleAnalyser(), mid=h/2;
+      ctx.clearRect(0,0,w,h); ctx.strokeStyle='#385446'; ctx.lineWidth=2; ctx.lineJoin='round'; ctx.beginPath();
+      if(analyser) {
+        if(!waveData || waveData.length!==analyser.fftSize) waveData=new Uint8Array(analyser.fftSize);
+        analyser.getByteTimeDomainData(waveData);
+        const step=waveData.length/w;
+        for(let x=0; x<=w; x++) {const v=(waveData[Math.min(waveData.length-1,Math.floor(x*step))]-128)/128; const y=mid-v*(mid-2)*1.6; x?ctx.lineTo(x,y):ctx.moveTo(x,y);}
+      } else {ctx.moveTo(0,mid); ctx.lineTo(w,mid);}
+      ctx.stroke();
+    }
+    // Hidden pages get no frames, so the loop pauses in the background by itself.
+    if(active || audioCtx) waveFrame=raf(drawWave);
+  }
+  // The crew map: an overhead view centred on you, north up, with the talk range as a ring.
+  function drawMap() {
+    const canvas=$('crew-map'); if(!canvas || !$('crew-details').open) return;
+    const area=sizeCanvas(canvas); if(!area) return;
+    const {ctx,w,h}=area, cx=w/2, cy=h/2, ringR=Math.min(w,h)/2-18, me=position();
+    ctx.clearRect(0,0,w,h); ctx.font="700 9px 'Space Grotesk',sans-serif"; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle='#82937d'; ctx.fillText('N',cx,8);
+    ctx.strokeStyle='#b8c4aa'; ctx.lineWidth=1; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.arc(cx,cy,ringR,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]);
+    ctx.textAlign='left'; ctx.fillText(rangeLabel(rangeFeet),cx+ringR*0.71+4,cy+ringR*0.71+4); ctx.textAlign='center';
+    if(!me) {ctx.fillStyle='#93a18f'; ctx.fillText('WAITING FOR YOUR LOCATION',cx,cy); return;}
+    const scale=ringR/rangeFeet, edge=Math.min(w,h)/2-8, cosLat=Math.cos(me.lat*Math.PI/180);
+    Object.entries(roster).forEach(([id,member])=>{
+      if(id===selfId || !current(member.pos)) return;
+      // Feet east and north of you (flat-earth is plenty at these distances).
+      const east=(member.pos.lon-me.lon)*cosLat*111320*3.28084, north=(member.pos.lat-me.lat)*110540*3.28084;
+      let x=east*scale, y=-north*scale; const r=Math.hypot(x,y), near=inRange(me,member.pos), out=r>edge;
+      if(out) {x*=edge/r; y*=edge/r;}
+      ctx.beginPath(); ctx.arc(cx+x,cy+y,9,0,Math.PI*2);
+      ctx.fillStyle=out?'#eef2e1':near?(floor===id?'#e97d48':'#e9c779'):'#eab39a'; ctx.fill();
+      ctx.strokeStyle=near?'#385446':'#c47b5e'; ctx.lineWidth=out?1.5:1; ctx.stroke();
+      ctx.fillStyle='#263e34'; ctx.fillText((member.name||'?').charAt(0).toUpperCase(),cx+x,cy+y+0.5);
+    });
+    ctx.beginPath(); ctx.arc(cx,cy,6,0,Math.PI*2); ctx.fillStyle='#385446'; ctx.fill();
+    ctx.beginPath(); ctx.arc(cx,cy,9,0,Math.PI*2); ctx.strokeStyle='#385446'; ctx.lineWidth=1.5; ctx.stroke();
+  }
   function setMode(next) {
     mode=next; $('host-tab').classList.toggle('active',mode==='host'); $('join-tab').classList.toggle('active',mode==='join');
     $('host-tab').setAttribute('aria-selected',mode==='host'); $('join-tab').setAttribute('aria-selected',mode==='join');
@@ -51,10 +121,10 @@
     $('screen-label').textContent=recovering?'RECONNECTING':position() ? (floor ? 'TRANSMITTING' : 'CHANNEL OPEN') : 'LOCATION NEEDED';
     $('screen-main').textContent=recovering?'HOLD ON':floor ? (floor===selfId?'YOU’RE ON!':(roster[floor]?.name||'SOMEONE').toUpperCase()) : (position()?'HELLO!':'NO GPS');
     $('screen-sub').textContent=recovering?'YOUR GROUP IS STILL OPEN':!position()?'WAITING FOR A FRESH LOCATION':floor?(floor===selfId?'RELEASE WHEN YOU’RE DONE':'CHANNEL IS IN USE'):'HOLD THE BUTTON TO TALK';
-    $('talk').classList.toggle('transmitting',floor===selfId);
+    $('talk').classList.toggle('transmitting',floor===selfId); $('talk').classList.toggle('held',held);
   }
   function render() {
-    if(!active) return;
+    if(!active) return; drawMap();
     $('group-title').textContent=groupName; $('range-tag').textContent=`◉ ${rangeLabel(rangeFeet)} RANGE`; $('count').textContent=String(Object.keys(roster).length).padStart(2,'0'); $('roster').replaceChildren();
     Object.entries(roster).forEach(([id, member])=>{
       const row=document.createElement('div'); row.className='member';
@@ -243,7 +313,7 @@
     if(!active || floor!==id || !inRange(position(),roster[id]?.pos)) {call.close(); return;}
     call.answer(); const audio=document.createElement('audio'); audio.autoplay=true; audio.playsInline=true;
     calls[id]={call,audio,outgoing:false};
-    call.on('stream',stream=>{audio.srcObject=stream; enforceAudio(); audio.play().catch(()=>msg('Tap anywhere on the page to enable incoming audio.'));});
+    call.on('stream',stream=>{audio.srcObject=stream; if(calls[id]?.call===call) calls[id].analyser=analyserFor(stream); enforceAudio(); audio.play().catch(()=>msg('Tap anywhere on the page to enable incoming audio.'));});
     call.on('close',()=>{audio.remove(); if(calls[id]?.call===call) delete calls[id];});
     call.on('error',()=>{audio.remove(); if(calls[id]?.call===call) delete calls[id];});
   }
@@ -261,7 +331,7 @@
   }
   function requestTalk(e) {
     if(e) e.preventDefault(); if(!active || recovering || held || !position() || floor) return;
-    held=true; msg('');
+    held=true; msg(''); startAudio(); updateScreen();
     if(isHost) {floor=selfId; broadcast(); beginTransmit();} else safeSend(hostConn,{type:'request'});
   }
   function release() {
@@ -275,6 +345,9 @@
   ['pointerup','pointercancel','lostpointercapture'].forEach(event=>$('talk').addEventListener(event,release));
   $('talk').addEventListener('keydown',e=>{if((e.key===' '||e.key==='Enter')&&!e.repeat) requestTalk(e);});
   $('talk').addEventListener('keyup',e=>{if(e.key===' '||e.key==='Enter') release();});
+  // A long press would otherwise open a context menu (and can drop the button's pressed look).
+  $('talk').addEventListener('contextmenu',e=>e.preventDefault());
+  $('crew-details').addEventListener('toggle',()=>drawMap());
   window.addEventListener('blur',release); document.addEventListener('visibilitychange',()=>{if(document.hidden) release();});
   function enter() {
     active=true; clearTimeout(initialTimer); initialTimer=null; initialDeadline=0; if (nativeSession) window.TrailRadioNative.radioConnected(groupName); document.body.classList.add('is-connected'); $('setup').hidden=true; $('connected').hidden=false; $('crew-details').hidden=false; $('room-code').textContent=roomId; $('connection-status').textContent='ON THE AIR'; msg(''); render(); window.scrollTo?.(0,0);
@@ -282,7 +355,7 @@
   function cleanup() {
     wantsGroup=false; recovering=false; hostReady=false; clearRetryTimers();
     release(); active=false; if(nativeSession) { nativeSession=false; window.TrailRadioNative.stopRadioSession(); } document.body.classList.remove('is-connected'); clearInterval(locationTimer); if(watchId!=null) navigator.geolocation.clearWatch(watchId); watchId=null;
-    Object.values(calls).forEach(x=>x.call.close()); calls={}; localStream?.getTracks().forEach(t=>t.stop()); localStream=null;
+    Object.values(calls).forEach(x=>x.call.close()); calls={}; localStream?.getTracks().forEach(t=>t.stop()); localStream=null; localAnalyser=null;
     const oldPeer=peer; peer=null; hostConn=null; connections={}; roster={}; floor=null; lastPosition=null; selfId=null; oldPeer?.destroy();
     $('setup').hidden=false; $('connected').hidden=true; $('crew-details').hidden=true; $('crew-details').open=false; $('start').disabled=false; updateScreen();
   }
@@ -325,14 +398,14 @@
     selfName=clean($('name').value); if(!selfName)return; isHost=mode==='host';
     roomId=isHost?'tr-'+Array.from(crypto.getRandomValues(new Uint8Array(8)),x=>x.toString(16).padStart(2,'0')).join(''):clean($('code').value).toLowerCase();
     if(!/^tr-[a-f0-9]{16}$/.test(roomId)){msg('That group code doesn’t look right. Ask your host for a fresh invitation.');return;}
-    groupName=isHost?(clean($('room-name').value)||'The Wanderers'):'Your group'; rangeFeet=isHost?cleanRange($('range').value):DEFAULT_RANGE_FT; if(isHost) {try {localStorage.setItem('trailRadioRange',String(rangeFeet));} catch (_) {}} $('start').disabled=true; $('permission-settings').hidden=true; msg('Getting your microphone and location ready…');
+    startAudio(); groupName=isHost?(clean($('room-name').value)||'The Wanderers'):'Your group'; rangeFeet=isHost?cleanRange($('range').value):DEFAULT_RANGE_FT; if(isHost) {try {localStorage.setItem('trailRadioRange',String(rangeFeet));} catch (_) {}} $('start').disabled=true; $('permission-settings').hidden=true; msg('Getting your microphone and location ready…');
     let stage='permissions';
     try {
       await requestPhonePermissions();
       stage='background';
       await startNativeSession();
       stage='microphone';
-      localStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false}); localStream.getAudioTracks().forEach(t=>t.enabled=false);
+      localStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false}); localStream.getAudioTracks().forEach(t=>t.enabled=false); localAnalyser=analyserFor(localStream);
       stage='location';
       const loc=await getLocation(); lastPosition={lat:loc.coords.latitude,lon:loc.coords.longitude,time:Date.now()};
       stage='network';

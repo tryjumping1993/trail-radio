@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
@@ -16,6 +17,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.ArrayList;
 
 public class MainActivity extends Activity {
     private WebView web;
@@ -23,7 +25,7 @@ public class MainActivity extends Activity {
     private PermissionRequest microphoneRequest;
     private GeolocationPermissions.Callback locationCallback;
     private String locationOrigin;
-    private static final int MIC_REQUEST = 101, LOCATION_REQUEST = 102;
+    private static final int MIC_REQUEST = 101, LOCATION_REQUEST = 102, PHONE_PERMISSIONS_REQUEST = 104;
     private static final String ORIGIN = "https://trailradio.local";
 
     @Override public void onCreate(Bundle state) {
@@ -79,7 +81,9 @@ public class MainActivity extends Activity {
     }
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(code, permissions, results);
-        if (code == MIC_REQUEST && microphoneRequest != null) {
+        if (code == PHONE_PERMISSIONS_REQUEST) {
+            deliverPhonePermissionResult();
+        } else if (code == MIC_REQUEST && microphoneRequest != null) {
             if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) microphoneRequest.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE}); else microphoneRequest.deny();
             microphoneRequest = null;
         } else if (code == LOCATION_REQUEST && locationCallback != null) {
@@ -91,7 +95,31 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == UpdateManager.INSTALL_SETTINGS) updates.onSettingsResult();
     }
+    private boolean hasPhonePermissions() {
+        boolean microphone = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+        boolean location = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        return microphone && location;
+    }
+    private void deliverPhonePermissionResult() {
+        if (isFinishing() || isDestroyed()) return;
+        web.evaluateJavascript("window.trailRadioPermissionResult && window.trailRadioPermissionResult(" + hasPhonePermissions() + ")", null);
+    }
     private class ShareBridge {
+        @JavascriptInterface public void requestPhonePermissions() {
+            runOnUiThread(() -> {
+                ArrayList<String> missing = new ArrayList<>();
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) missing.add(Manifest.permission.RECORD_AUDIO);
+                if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                    missing.add(Manifest.permission.ACCESS_FINE_LOCATION);
+                    missing.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+                }
+                if (missing.isEmpty()) deliverPhonePermissionResult();
+                else requestPermissions(missing.toArray(new String[0]), PHONE_PERMISSIONS_REQUEST);
+            });
+        }
+        @JavascriptInterface public void openAppSettings() {
+            runOnUiThread(() -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))));
+        }
         @JavascriptInterface public void checkForUpdates() { updates.check(true); }
         @JavascriptInterface public void shareInvite(String text) {
             if (text == null || text.length() > 1000) return;

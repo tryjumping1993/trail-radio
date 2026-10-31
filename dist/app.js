@@ -24,9 +24,10 @@
   }
   $('host-tab').onclick=()=>setMode('host'); $('join-tab').onclick=()=>setMode('join');
   if (window.TrailRadioNative) { $('check-update').hidden=false; $('check-update').onclick=()=>window.TrailRadioNative.checkForUpdates(); }
+  $('permission-settings').onclick=()=>window.TrailRadioNative?.openAppSettings();
   const urlRoom = new URL(location.href).searchParams.get('room'); if(urlRoom) $('code').value=urlRoom; setMode(mode);
   function updateScreen() {
-    if(!active) { $('screen-label').textContent='OFFLINE'; $('screen-main').textContent='READY?'; $('screen-sub').textContent='YOUR NEXT ADVENTURE AWAITS'; $('talk').disabled=true; return; }
+    if(!active) { $('screen-label').textContent='OFFLINE'; $('screen-main').textContent='READY?'; $('screen-sub').textContent='START OR JOIN A GROUP'; $('talk').disabled=true; return; }
     $('talk').disabled=!position() || (!!floor && floor!==selfId);
     $('screen-label').textContent=position() ? (floor ? 'TRANSMITTING' : 'CHANNEL OPEN') : 'LOCATION NEEDED';
     $('screen-main').textContent=floor ? (floor===selfId?'YOU’RE ON!':(roster[floor]?.name||'SOMEONE').toUpperCase()) : (position()?'HELLO!':'NO GPS');
@@ -133,10 +134,10 @@
   $('talk').addEventListener('keyup',e=>{if(e.key===' '||e.key==='Enter') release();});
   window.addEventListener('blur',release); document.addEventListener('visibilitychange',()=>{if(document.hidden) release();});
   function enter() {
-    active=true; $('setup').hidden=true; $('connected').hidden=false; $('room-code').textContent=roomId; $('connection-status').textContent='ON THE AIR'; msg(''); render();
+    active=true; document.body.classList.add('is-connected'); $('setup').hidden=true; $('connected').hidden=false; $('room-code').textContent=roomId; $('connection-status').textContent='ON THE AIR'; msg(''); render();
   }
   function cleanup() {
-    release(); active=false; clearInterval(locationTimer); if(watchId!=null) navigator.geolocation.clearWatch(watchId); watchId=null;
+    release(); active=false; document.body.classList.remove('is-connected'); clearInterval(locationTimer); if(watchId!=null) navigator.geolocation.clearWatch(watchId); watchId=null;
     Object.values(calls).forEach(x=>x.call.close()); calls={}; localStream?.getTracks().forEach(t=>t.stop()); localStream=null;
     peer?.destroy(); peer=null; hostConn=null; connections={}; roster={}; floor=null; lastPosition=null; selfId=null;
     $('setup').hidden=false; $('connected').hidden=true; $('start').disabled=false; updateScreen();
@@ -144,18 +145,29 @@
   $('leave').onclick=()=>{cleanup(); msg('You left the group.');};
   $('copy').onclick=async()=>{
     const invite=new URL(location.hostname==='trailradio.local'?'trailradio://join':location.href); invite.search=''; invite.searchParams.set('room',roomId);
-    const text=`Join my Trail Radio group “${groupName}”\n${invite.href}\nGroup code: ${roomId}`;
-    try {if(window.TrailRadioNative) { window.TrailRadioNative.shareInvite(text); } else if(navigator.share) await navigator.share({title:'Join my Trail Radio group',text}); else {await navigator.clipboard.writeText(text); msg('Invitation copied. Send it to your crew!');}} catch(e) {if(e.name!=='AbortError') {try{await navigator.clipboard.writeText(text);msg('Invitation copied. Send it to your crew!');}catch(_){msg('Copy this group code and send it to your crew: '+roomId);}}}
+    const text=`Join my Big Walk Radio group “${groupName}”\n${invite.href}\nGroup code: ${roomId}`;
+    try {if(window.TrailRadioNative) { window.TrailRadioNative.shareInvite(text); } else if(navigator.share) await navigator.share({title:'Join my Big Walk Radio group',text}); else {await navigator.clipboard.writeText(text); msg('Invitation copied. Send it to your crew!');}} catch(e) {if(e.name!=='AbortError') {try{await navigator.clipboard.writeText(text);msg('Invitation copied. Send it to your crew!');}catch(_){msg('Copy this group code and send it to your crew: '+roomId);}}}
   };
+  function requestPhonePermissions() {
+    if (!window.TrailRadioNative) return Promise.resolve();
+    return new Promise((resolve,reject)=>{
+      window.trailRadioPermissionResult=granted=>{
+        delete window.trailRadioPermissionResult;
+        if(granted) resolve(); else {const error=new Error('Phone permissions denied'); error.name='PhonePermissionDenied'; reject(error);}
+      };
+      try {window.TrailRadioNative.requestPhonePermissions();} catch(error) {delete window.trailRadioPermissionResult; reject(error);}
+    });
+  }
   function getLocation() {return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,timeout:20000,maximumAge:10000}));}
   $('setup-form').onsubmit=async e=>{
     e.preventDefault(); if(!window.Peer){msg('The radio network could not load. Check your internet connection and try again.');return;}
-    if(!navigator.geolocation || !navigator.mediaDevices?.getUserMedia){msg('This browser needs HTTPS, microphone and location support to use the radio.');return;}
+    if(!navigator.geolocation || !navigator.mediaDevices?.getUserMedia){msg(window.TrailRadioNative?'Your phone needs microphone and location support to use the radio.':'This browser needs HTTPS, microphone and location support to use the radio.');return;}
     selfName=clean($('name').value); if(!selfName)return; isHost=mode==='host';
     roomId=isHost?'tr-'+Array.from(crypto.getRandomValues(new Uint8Array(8)),x=>x.toString(16).padStart(2,'0')).join(''):clean($('code').value).toLowerCase();
     if(!/^tr-[a-f0-9]{16}$/.test(roomId)){msg('That group code doesn’t look right. Ask your host for a fresh invitation.');return;}
-    groupName=isHost?(clean($('room-name').value)||'The Wanderers'):'Your group'; $('start').disabled=true; msg('Getting your microphone and location ready…');
+    groupName=isHost?(clean($('room-name').value)||'The Wanderers'):'Your group'; $('start').disabled=true; $('permission-settings').hidden=true; msg('Getting your microphone and location ready…');
     try {
+      await requestPhonePermissions();
       localStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false}); localStream.getAudioTracks().forEach(t=>t.enabled=false);
       const loc=await getLocation(); lastPosition={lat:loc.coords.latitude,lon:loc.coords.longitude,time:Date.now()};
       peer=isHost?new Peer(roomId):new Peer();
@@ -168,7 +180,7 @@
       peer.on('connection',conn=>isHost?hostConnection(conn):conn.close()); peer.on('call',incoming);
       peer.on('disconnected',()=>{if(active)msg('Radio network disconnected. Reconnecting…'); peer?.reconnect();});
       peer.on('error',err=>{const text=err.type==='peer-unavailable'?'Could not find that group. Make sure the host is online and check the code.':'Could not connect to the radio network. Please try again.'; cleanup();msg(text);});
-    } catch(err) {cleanup(); msg(err.code===1||err.name==='NotAllowedError'?'Microphone and location permission are needed to join. Allow access in your browser settings and try again.':'Could not get a microphone or fresh location. Check your device settings and try again.');}
+    } catch(err) {cleanup(); const denied=err.code===1||err.name==='NotAllowedError'||err.name==='PhonePermissionDenied'; if(denied && window.TrailRadioNative) { $('permission-settings').hidden=false; msg('Allow microphone and location for Big Walk Radio in your phone settings, then try again.'); } else msg(denied?'Allow microphone and location access in your browser settings, then try again.':'Could not get a microphone or fresh location. Check your device settings and try again.');}
   };
   window.addEventListener('pagehide',()=>{release(); peer?.destroy();});
 })();

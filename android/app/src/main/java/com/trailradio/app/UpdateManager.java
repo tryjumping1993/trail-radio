@@ -59,7 +59,7 @@ final class UpdateManager {
                 String current = installed.versionName;
                 if (tag.equals(current) || tag.equals("v" + current)) {
                     rememberCheck();
-                    if (manual) show("You're up to date", "Trail Radio is already on the latest release.");
+                    if (manual) show("You're up to date", "Big Walk Radio is already on the latest release.");
                     return;
                 }
                 JSONArray assets = release.getJSONArray("assets");
@@ -91,7 +91,7 @@ final class UpdateManager {
                     activity.runOnUiThread(() -> {
                         if (activity.isFinishing() || activity.isDestroyed()) return;
                         new AlertDialog.Builder(activity).setTitle("Update available")
-                            .setMessage("Trail Radio " + tag + " is ready to install. Android will ask you to confirm the update.")
+                            .setMessage("Big Walk Radio " + tag + " is ready to install. Android will ask you to confirm the update.")
                             .setNegativeButton("Later", null).setPositiveButton("Install", (dialog, which) -> beginInstall()).show();
                     });
                 } finally { if (temp.exists()) temp.delete(); }
@@ -156,12 +156,12 @@ final class UpdateManager {
     }
     private void beginInstall() {
         if (!activity.getPackageManager().canRequestPackageInstalls()) {
-            new AlertDialog.Builder(activity).setTitle("Allow updates from Trail Radio")
-                .setMessage("Android needs your permission to install updates downloaded by Trail Radio. You can turn this off later in system settings.")
+            new AlertDialog.Builder(activity).setTitle("Allow updates from Big Walk Radio")
+                .setMessage("Android needs your permission to install updates downloaded by Big Walk Radio. You can turn this off later in system settings.")
                 .setNegativeButton("Not now", null).setPositiveButton("Open settings", (dialog, which) -> {
                     waitingForInstallSettings = true;
                     try { activity.startActivityForResult(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + activity.getPackageName())), INSTALL_SETTINGS); }
-                    catch (Exception error) { waitingForInstallSettings = false; show("Couldn't open settings", "Allow Trail Radio to install updates in Android settings, then check for updates again."); }
+                    catch (Exception error) { waitingForInstallSettings = false; show("Couldn't open settings", "Allow Big Walk Radio to install updates in Android settings, then check for updates again."); }
                 }).show();
             return;
         }
@@ -176,8 +176,8 @@ final class UpdateManager {
             Uri uri = Uri.parse("content://" + activity.getPackageName() + ".updates/update.apk");
             Intent intent = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive");
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            intent.setClipData(ClipData.newRawUri("Trail Radio update", uri));
+            intent.setClipData(ClipData.newRawUri("Big Walk Radio update", uri));
             activity.startActivity(intent);
-        } catch (Exception error) { show("Couldn't install update", "Please check for updates again or download the APK from the Trail Radio releases page."); }
+        } catch (Exception error) { show("Couldn't install update", "Please check for updates again or download the APK from the Big Walk Radio releases page."); }
     }
 }

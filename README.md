@@ -1,10 +1,12 @@
-# Trail Radio
+# Big Walk Radio
+
+An unofficial fan-made companion inspired by [Big Walk](https://bigwalk.game/) by House House.
 
 A small push-to-talk group radio for Android and the web. The host keeps the channel open and grants it to one speaker at a time. Audio is sent to group members whose latest location is within about 1,500 feet of the speaker. Everyone needs an internet connection, microphone and location permissions. The host must remain online; GPS and peer-to-peer connectivity can vary by device and network. This is not an emergency communications tool.
 
 ## Android
 
-Install `Trail-Radio.apk` from a GitHub release. Android invitations use a `trailradio://join` link and open on devices with Trail Radio installed. The app checks public GitHub releases automatically about every six hours while in use; you can also tap **Check for updates**. Updates download without a GitHub account or API key, then Android asks you to allow installs from Trail Radio and confirm the installation. The app verifies the APK package and signing certificate before handing it to Android. Versions before 1.0.1 need a one-time manual installation of the newer APK. The app uses the bundled web files; the radio still depends on the external PeerJS signaling service, and some networks may block peer-to-peer calls.
+Install `Big-Walk-Radio.apk` from a GitHub release. Android invitations use a `trailradio://join` link and open on devices with Big Walk Radio installed. The app checks public GitHub releases automatically about every six hours while in use; you can also tap **Check for updates**. Updates download without a GitHub account or API key, then Android asks you to allow installs from Big Walk Radio and confirm the installation. The release also includes a `Trail-Radio.apk` compatibility copy for older in-app updaters. The app verifies the APK package and signing certificate before handing it to Android. Versions before 1.0.1 need a one-time manual installation of the newer APK. The app uses the bundled web files; the radio still depends on the external PeerJS signaling service, and some networks may block peer-to-peer calls.
 
 The APK is signed with a dedicated key stored **only on this PC** under `Z:\trail-radio-runner\signing`. Back it up securely: losing it prevents future APKs from updating existing installations. The key and password are not stored in this repository. The password file is encrypted for this Windows user on this PC; before replacing the PC, export the password securely while signed in as the same user and back it up separately from the keystore.
 

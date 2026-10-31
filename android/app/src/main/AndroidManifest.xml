@@ -4,7 +4,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <application android:label="Trail Radio" android:theme="@style/AppTheme" android:usesCleartextTraffic="false" android:allowBackup="false">
+    <application android:label="Big Walk Radio" android:theme="@style/AppTheme" android:usesCleartextTraffic="false" android:allowBackup="false">
         <provider android:name=".UpdateProvider" android:authorities="${applicationId}.updates" android:exported="false" android:grantUriPermissions="true" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

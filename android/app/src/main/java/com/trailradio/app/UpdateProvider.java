@@ -28,7 +28,7 @@ public final class UpdateProvider extends ContentProvider {
         try {
             File apk = file(uri); String[] columns = projection == null ? new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE} : projection;
             MatrixCursor cursor = new MatrixCursor(columns); Object[] values = new Object[columns.length];
-            for (int i=0; i<columns.length; i++) { if (OpenableColumns.DISPLAY_NAME.equals(columns[i])) values[i] = "Trail-Radio.apk"; else if (OpenableColumns.SIZE.equals(columns[i])) values[i] = apk.length(); }
+            for (int i=0; i<columns.length; i++) { if (OpenableColumns.DISPLAY_NAME.equals(columns[i])) values[i] = "Big-Walk-Radio.apk"; else if (OpenableColumns.SIZE.equals(columns[i])) values[i] = apk.length(); }
             cursor.addRow(values); return cursor;
         } catch (FileNotFoundException e) { return null; }
     }

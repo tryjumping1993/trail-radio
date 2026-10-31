@@ -79,26 +79,35 @@ public final class PermissionInstrumentation extends Instrumentation {
     }
     private void backgroundPeerTest(Activity activity, WebView web, String role, Bundle result) throws Exception {
         String room = arguments.getString("room", "");
-        if ("client".equals(role) && !room.matches("tr-[a-f0-9]{16}")) throw new AssertionError("Missing host room");
-        if ("client".equals(role)) {
+        boolean hostRole = role.startsWith("host"), clientRole = role.startsWith("client"), injectDisconnect = role.endsWith("reconnect");
+        if (clientRole && !room.matches("tr-[a-f0-9]{16}")) throw new AssertionError("Missing host room");
+        if (injectDisconnect) eval(activity, web, "window.__heartbeatCount=0;window.__socketCount=0;const NativeWS=window.WebSocket;window.WebSocket=function(...a){let w=new NativeWS(...a);if(String(a[0]).includes('peerjs?')){window.__signalSocket=w;window.__socketCount++;let send=w.send.bind(w);w.send=d=>{if(String(d).includes('HEARTBEAT'))window.__heartbeatCount++;return send(d);};}return w;};window.WebSocket.prototype=NativeWS.prototype;Object.setPrototypeOf(window.WebSocket,NativeWS);");
+        if (clientRole) {
             eval(activity, web, "document.getElementById('join-tab').click();document.getElementById('code').value='" + room + "';");
         }
         eval(activity, web, "document.getElementById('name').value='" + role + "';document.getElementById('room-name').value='Background Test';document.getElementById('setup-form').requestSubmit();");
         waitFor(activity, web, "document.getElementById('connected').hidden ? 'waiting' : 'connected'", "\"connected\"", 45);
         if (RadioService.current() == null) throw new AssertionError("Foreground radio service not running");
-        if ("host".equals(role) || "host-detached".equals(role)) {
+        if (hostRole) {
             room = new org.json.JSONArray("[" + eval(activity, web, "document.getElementById('room-code').textContent") + "]").getString(0);
             eval(activity, web, "window.__audioPlays=0; const oldCreate=document.createElement.bind(document);document.createElement=(tag,...args)=>{const el=oldCreate(tag,...args);if(String(tag).toLowerCase()==='audio')el.addEventListener('playing',()=>window.__audioPlays++);return el;};");
             CountDownLatch moved = new CountDownLatch(1);
             activity.runOnUiThread(() -> { activity.moveTaskToBack(true); moved.countDown(); });
             if (!moved.await(10, TimeUnit.SECONDS)) throw new AssertionError("Could not background activity");
-            if ("host-detached".equals(role)) {
+            if ("host-detached".equals(role) || "host-reconnect".equals(role)) {
                 activity.runOnUiThread(activity::finish);
                 for (int i=0; i<20 && !activity.isDestroyed(); i++) Thread.sleep(250);
                 if (!activity.isDestroyed() || RadioService.current() == null) throw new AssertionError("Could not detach the host activity while retaining service");
             }
             Bundle ready = new Bundle(); ready.putString("phase", "host-ready"); ready.putString("room", room); sendStatus(1, ready);
-            Thread.sleep(35000);
+            if (injectDisconnect) {
+                Thread.sleep(22000);
+                if (!"true".equals(eval(activity, web, "!!window.__signalSocket"))) throw new AssertionError("Host signaling socket was not captured");
+                eval(activity, web, "window.__signalSocket.close()");
+                Thread.sleep(13000);
+                waitFor(activity, web, "window.__socketCount >= 2", "true", 20);
+                if (!"true".equals(eval(activity, web, "window.__heartbeatCount >= 2"))) throw new AssertionError("Background signaling heartbeats were not sent");
+            } else Thread.sleep(35000);
             android.os.PowerManager power = (android.os.PowerManager) activity.getSystemService(Activity.POWER_SERVICE);
             if (power.isInteractive()) throw new AssertionError("Screen was not turned off for background test");
             if (RadioService.current() == null) throw new AssertionError("Foreground service stopped while screen was off");
@@ -108,9 +117,16 @@ public final class PermissionInstrumentation extends Instrumentation {
             result.putString("result", "PASS: screen-off host stayed in the group and played incoming audio");
         } else {
             Bundle ready = new Bundle(); ready.putString("phase", "client-ready"); sendStatus(1, ready);
-            Thread.sleep(40000);
+            if (injectDisconnect) {
+                Thread.sleep(20000);
+                if (!"true".equals(eval(activity, web, "!!window.__signalSocket"))) throw new AssertionError("Client signaling socket was not captured");
+                eval(activity, web, "window.__signalSocket.close()");
+                Thread.sleep(20000);
+                waitFor(activity, web, "window.__socketCount >= 2", "true", 20);
+            } else Thread.sleep(40000);
             android.os.PowerManager power = (android.os.PowerManager) activity.getSystemService(Activity.POWER_SERVICE);
             if (power.isInteractive()) throw new AssertionError("Screen was not turned off for client test");
+            waitFor(activity, web, "document.getElementById('talk').disabled", "false", 25);
             eval(activity, web, "document.getElementById('talk').dispatchEvent(new KeyboardEvent('keydown',{key:' ',bubbles:true}));");
             waitFor(activity, web, "document.getElementById('screen-label').textContent", "\"TRANSMITTING\"", 15);
             Thread.sleep(10000);
@@ -129,7 +145,7 @@ public final class PermissionInstrumentation extends Instrumentation {
             for (int i=0; i<45; i++) { state = eval(activity, web, "document.readyState"); if (state.contains("complete")) break; Thread.sleep(1000); }
             if (!state.contains("complete")) throw new AssertionError("WebView page did not finish loading: " + state);
             String role = arguments == null ? "" : arguments.getString("role", "");
-            if ("host".equals(role) || "host-detached".equals(role) || "client".equals(role)) { backgroundPeerTest(activity, web, role, result); finish(Activity.RESULT_OK,result); return; }
+            if (role.startsWith("host") || role.startsWith("client")) { backgroundPeerTest(activity, web, role, result); finish(Activity.RESULT_OK,result); return; }
             if ("no-notification".equals(role) || "battery-prompt".equals(role)) {
                 if ("no-notification".equals(role)) activity.getPreferences(Activity.MODE_PRIVATE).edit().putBoolean("asked_radio_notifications", true).apply();
                 else activity.getPreferences(Activity.MODE_PRIVATE).edit().putBoolean("asked_radio_battery", false).apply();

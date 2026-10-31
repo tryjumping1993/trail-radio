@@ -24,7 +24,7 @@ import java.util.Arrays;
 /** Owns the live WebView independently of an Activity while a group is active. */
 final class RadioRuntime {
     static final String ORIGIN = "https://trailradio.local";
-    private static RadioRuntime instance;
+    private static volatile RadioRuntime instance;
     private final Context app;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final MutableContextWrapper webContext;
@@ -122,6 +122,8 @@ final class RadioRuntime {
         if (!sessionRequested || !Double.isFinite(latitude) || !Double.isFinite(longitude)) return;
         execute("window.radioNativeLocation && window.radioNativeLocation(" + latitude + "," + longitude + "," + timestamp + ")");
     }
+    void backgroundTick() { if (sessionRequested) execute("window.radioBackgroundTick && window.radioBackgroundTick()"); }
+    void networkAvailable() { main.post(() -> { if (sessionRequested) execute("window.radioNetworkAvailable && window.radioNetworkAvailable()"); }); }
     void phonePermissionResult(boolean ok) { execute("window.trailRadioPermissionResult && window.trailRadioPermissionResult(" + ok + ")"); }
     private void execute(String script) { main.post(() -> { if (instance == this) web.evaluateJavascript(script, null); }); }
     private void dispose() {
@@ -135,6 +137,7 @@ final class RadioRuntime {
         @JavascriptInterface public void startRadioSession() { MainActivity host = activity.get(); if (host != null) host.runOnUiThread(host::requestRadioService); else serviceStarted(false); }
         @JavascriptInterface public void stopRadioSession() { main.post(RadioRuntime.this::stopSession); }
         @JavascriptInterface public void radioConnected(String group) { main.post(() -> { connected = true; RadioService service = RadioService.current(); if (service != null) service.updateGroup(group); MainActivity host = activity.get(); if (host != null) host.maybeRequestBatteryExemption(); }); }
+        @JavascriptInterface public void radioNetworkStatus(boolean ready) { main.post(() -> { RadioService service = RadioService.current(); if (service != null) service.updateNetwork(ready); }); }
         @JavascriptInterface public void openAppSettings() { MainActivity host = activity.get(); if (host != null) host.runOnUiThread(host::openAppSettings); }
         @JavascriptInterface public void checkForUpdates() { MainActivity host = activity.get(); if (host != null) host.runOnUiThread(host::checkForUpdates); }
         @JavascriptInterface public void shareInvite(String text) { MainActivity host = activity.get(); if (host != null && text != null && text.length() <= 1000) host.runOnUiThread(() -> host.shareInvite(text)); }

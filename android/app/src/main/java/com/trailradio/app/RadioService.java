@@ -12,9 +12,13 @@ import android.content.pm.ServiceInfo;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
 
 /** Keeps an active radio session and location updates alive while its screen is hidden. */
@@ -26,6 +30,22 @@ public final class RadioService extends Service {
     private LocationManager locations;
     private Location lastLocation;
     private String group = "";
+    private boolean networkReady = true;
+    private ConnectivityManager connectivity;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable tick = new Runnable() {
+        @Override public void run() {
+            RadioRuntime runtime = RadioRuntime.existing();
+            if (runtime != null) runtime.backgroundTick();
+            handler.postDelayed(this, 10000);
+        }
+    };
+    private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
+        @Override public void onAvailable(Network network) {
+            RadioRuntime runtime = RadioRuntime.existing();
+            if (runtime != null) runtime.networkAvailable();
+        }
+    };
     private final LocationListener listener = new LocationListener() {
         @Override public void onLocationChanged(Location location) { deliver(location); }
         @Override public void onProviderEnabled(String provider) { }
@@ -45,6 +65,13 @@ public final class RadioService extends Service {
             if (wakeLock == null) wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BigWalkRadio:active-group");
             if (!wakeLock.isHeld()) wakeLock.acquire();
             startLocations();
+            if (connectivity == null) {
+                try {
+                    connectivity = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+                    connectivity.registerDefaultNetworkCallback(networkCallback);
+                } catch (RuntimeException error) { connectivity = null; }
+            }
+            handler.removeCallbacks(tick); handler.postDelayed(tick, 10000);
             RadioRuntime runtime = RadioRuntime.existing();
             if (runtime != null) runtime.serviceStarted(true); else stopSelf();
         } catch (RuntimeException error) {
@@ -57,13 +84,17 @@ public final class RadioService extends Service {
     private Notification notification() {
         Intent open = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent tap = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        String text = group.isEmpty() ? "Connecting to your group" : "Connected to " + group + " · Tap to return";
+        String text = group.isEmpty() ? "Connecting to your group" : (networkReady ? "Connected to " : "Reconnecting to ") + group + " · Tap to return";
         return new Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("Big Walk Radio is on").setContentText(text).setContentIntent(tap)
             .setOngoing(true).setOnlyAlertOnce(true).setCategory(Notification.CATEGORY_SERVICE).build();
     }
     void updateGroup(String value) {
         group = value == null ? "" : value.trim().substring(0, Math.min(value.trim().length(), 32));
+        ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTIFICATION, notification());
+    }
+    void updateNetwork(boolean ready) {
+        networkReady = ready;
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTIFICATION, notification());
     }
     private void startLocations() {
@@ -93,6 +124,8 @@ public final class RadioService extends Service {
     }
     @Override public IBinder onBind(Intent intent) { return null; }
     @Override public void onDestroy() {
+        handler.removeCallbacks(tick);
+        if (connectivity != null) { try { connectivity.unregisterNetworkCallback(networkCallback); } catch (RuntimeException ignored) { } connectivity = null; }
         if (locations != null) { try { locations.removeUpdates(listener); } catch (SecurityException ignored) { } locations = null; }
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         if (current == this) current = null;

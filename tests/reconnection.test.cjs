@@ -3,8 +3,8 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('dist/app.js', 'utf8');
 
-async function createScenario(mode, range='1500') {
-  let now = 100000, nextTimer = 1, watches = 0;
+async function createScenario(mode, range='1500', saved=new Map()) {
+  let now = 100000, nextTimer = 1, watches = 0, seed = saved.size*101+7;
   const timers = new Map(), elements = new Map(), peers = [], events = [], listeners = {};
   function setTimer(fn, delay, interval=false) { const id=nextTimer++; timers.set(id,{fn,at:now+Number(delay||0),interval:interval?Number(delay):0}); return id; }
   function clearTimer(id) {timers.delete(id);}
@@ -23,7 +23,9 @@ async function createScenario(mode, range='1500') {
   class FakeDate extends Date { static now(){return now;} }
   class Element {
     constructor(){this.hidden=false;this.disabled=false;this.value='';this.textContent='';this.firstChild={textContent:''};this.classList={add(){},remove(){},toggle(){}};}
-    addEventListener(){} setAttribute(){} replaceChildren(){} append(){} remove(){}
+    addEventListener(){} setAttribute(){} remove(){}
+    replaceChildren(...c){this.children=c;} append(...c){this.children=[...(this.children||[]),...c];}
+    requestSubmit(){return this.onsubmit?.({preventDefault(){}});}
   }
   const get=id=>{if(!elements.has(id)) elements.set(id,new Element());return elements.get(id);};
   get('name').value='Sunny'; get('room-name').value='Crew'; get('code').value='tr-0123456789abcdef'; get('range').value=range;
@@ -56,13 +58,14 @@ async function createScenario(mode, range='1500') {
     checkForUpdates(){},openAppSettings(){}
   };
   const navigator={geolocation:{getCurrentPosition(ok){ok({coords:{latitude:1,longitude:1}});},watchPosition(){watches++;return watches;},clearWatch(){}},mediaDevices:{async getUserMedia(){return {getAudioTracks:()=>[{enabled:false}],getTracks:()=>[]};}}};
-  const context={window,document,navigator,Peer:FakePeer,location:{href:'https://trailradio.local/index.html',hostname:'trailradio.local'},URL,crypto:{getRandomValues(a){a.fill(1);return a;}},
+  const context={window,document,navigator,Peer:FakePeer,location:{href:'https://trailradio.local/index.html',hostname:'trailradio.local'},URL,crypto:{getRandomValues(a){for(let i=0;i<a.length;i++) a[i]=(seed++*37+i)&255;return a;}},
+    localStorage:{getItem:k=>saved.has(k)?saved.get(k):null,setItem:(k,v)=>saved.set(k,String(v))},
     setTimeout:(fn,ms)=>setTimer(fn,ms),clearTimeout:clearTimer,setInterval:(fn,ms)=>setTimer(fn,ms,true),clearInterval:clearTimer,Date:FakeDate,Number,Math,String,Object,Array,Promise};
   vm.runInNewContext(source,context,{filename:'app.js'});
   if(mode==='join') get('join-tab').onclick();
   await get('setup-form').onsubmit({preventDefault(){}});
   await Promise.resolve();
-  return {get,window,events,peers,advance,skip:ms=>{now+=ms;},watches:()=>watches};
+  return {get,window,events,peers,advance,skip:ms=>{now+=ms;},watches:()=>watches,saved};
 }
 (async()=>{
   const host=await createScenario('host');
@@ -141,5 +144,40 @@ async function createScenario(mode, range='1500') {
   state(99999); assert.equal(ranged.get('range-tag').textContent,'◉ 1 MILE RANGE','the range never exceeds a mile');
   state(undefined); assert.equal(ranged.get('range-tag').textContent,'◉ 1,500 FT RANGE','older hosts keep 1,500 ft');
   ranged.get('leave').onclick();
+  // A member who comes back on a new connection (switched apps, reloaded) is counted once.
+  const dedupe=await createScenario('host');
+  const dp=dedupe.peers[0]; dp.opened();
+  const join=(peerId,key)=>{const c=new (dp.connect('x').constructor)(peerId); dp.emit('connection',c); c.open=true; c.emit('open'); c.emit('data',{type:'hello',name:'Fern',key}); return c;};
+  const KEY='ab'.repeat(16);
+  const original=join('guest-a',KEY); join('guest-b','cd'.repeat(16));
+  assert.equal(dedupe.get('count').textContent,'03','host and two guests');
+  const again=join('guest-a2',KEY);
+  assert.equal(dedupe.get('count').textContent,'03','the returning guest replaces their old entry');
+  assert.equal(original.open,false,'the old connection is closed');
+  assert.deepEqual(Object.keys(again.sent.at(-1).roster).sort(),[dp.id,'guest-a2','guest-b'].sort());
+  assert.equal(Object.values(again.sent.at(-1).roster).some(m=>'key' in m),false,'member keys are not shared');
+  dedupe.get('leave').onclick();
+
+  // Closing the app keeps the group offered for a rejoin; leaving removes it.
+  const saved=new Map();
+  const before=await createScenario('host','2000',saved);
+  before.peers[0].opened();
+  const hostRoom=before.get('room-code').textContent;
+  const later=await createScenario('join','1500',saved);
+  assert.equal(later.get('rejoin').hidden,false,'a recent group is offered after a restart');
+  const recent=JSON.parse(saved.get('trailRadioGroups'));
+  assert.equal(recent[0].room,hostRoom); assert.equal(recent[0].host,true); assert.equal(recent[0].range,2000);
+  later.get('leave').onclick();
+  const rehost=await createScenario('host','1500',saved);
+  rehost.peers[0].opened(); rehost.get('leave').onclick();
+  const offered=rehost.get('rejoin-list').children;
+  assert.equal(offered.length,1,'only the group that was not left is offered');
+  assert.match(offered[0].textContent,/YOU HOST/);
+  offered[0].onclick(); await new Promise(r=>setImmediate(r));
+  assert.equal(rehost.peers.at(-1).id,hostRoom,'a host rejoins with the same group code');
+  rehost.peers.at(-1).opened();
+  assert.equal(rehost.get('range-tag').textContent,'◉ 2,000 FT RANGE','with the same range');
+  rehost.get('leave').onclick();
+  assert.equal(JSON.parse(saved.get('trailRadioGroups')).length,0,'leaving forgets the group');
   console.log('Reconnection and background heartbeat checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

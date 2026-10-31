@@ -26,6 +26,49 @@
   window.visualViewport?.addEventListener('resize',keepFocusedFieldVisible);
   const safeSend = (conn, data) => { if (conn && conn.open) { try { conn.send(data); } catch (_) {} } };
   const clean = text => String(text || '').trim().slice(0, 32);
+  const store = {
+    get(key) {try {return localStorage.getItem(key);} catch (_) {return null;}},
+    set(key,value) {try {localStorage.setItem(key,value);} catch (_) {}},
+  };
+  // One key per device, sent in every hello: a member who comes back on a new connection (a
+  // switched app, a reload) replaces their old entry instead of being counted twice.
+  const memberKey = (() => {
+    let key=store.get('trailRadioMember');
+    if(!/^[a-f0-9]{32}$/.test(key||'')) {key=Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join(''); store.set('trailRadioMember',key);}
+    return key;
+  })();
+  // Groups this device was in and did not leave (the app closed, reloaded or updated), newest
+  // first, for 12 hours after they were last seen.
+  const RECENT_MS=12*3600*1000, MAX_RECENT=3;
+  let rejoinRoom=null;
+  function recentGroups() {
+    let list; try {list=JSON.parse(store.get('trailRadioGroups')||'[]');} catch (_) {list=[];}
+    if(!Array.isArray(list)) list=[];
+    return list.filter(g=>g && /^tr-[a-f0-9]{16}$/.test(g.room) && Date.now()-Number(g.at)<RECENT_MS).slice(0,MAX_RECENT);
+  }
+  function saveRecent(list) {store.set('trailRadioGroups',JSON.stringify(list.slice(0,MAX_RECENT)));}
+  function rememberGroup() {
+    if(!roomId) return;
+    saveRecent([{room:roomId,host:isHost,name:selfName,group:groupName,range:rangeFeet,at:Date.now()},...recentGroups().filter(g=>g.room!==roomId)]);
+  }
+  function forgetGroup(room) {saveRecent(recentGroups().filter(g=>g.room!==room)); showRecent();}
+  function showRecent() {
+    const list=recentGroups(), box=$('rejoin');
+    if(!box) return;
+    box.hidden=!list.length || active; const rows=$('rejoin-list'); rows.replaceChildren();
+    list.forEach(g=>{
+      const b=document.createElement('button'); b.type='button'; b.className='rejoin-button';
+      b.textContent=`${clean(g.group)||'Your group'}${g.host?' · YOU HOST':''}`;
+      b.onclick=()=>rejoin(g); rows.append(b);
+    });
+  }
+  function rejoin(g) {
+    setMode(g.host?'host':'join');
+    $('name').value=clean(g.name)||$('name').value;
+    if(g.host) {$('room-name').value=clean(g.group); $('range').value=String(cleanRange(g.range)); rejoinRoom=g.room;}
+    else $('code').value=g.room;
+    $('setup-form').requestSubmit();
+  }
   function distance(a,b) {
     if (!a || !b) return null;
     const rad = n => n * Math.PI / 180, dLat = rad(b.lat-a.lat), dLon = rad(b.lon-a.lon);
@@ -80,40 +123,99 @@
     // Hidden pages get no frames, so the loop pauses in the background by itself.
     if(active || audioCtx) waveFrame=raf(drawWave);
   }
-  // The crew map: an overhead view centred on you, north up, with the talk range as a ring.
+  // The crew map: an overhead view centred on you, north up. At zoom 0 the map reaches twice the
+  // talk range from you (the range ring sits halfway out); + and - halve and double that. Under it
+  // lies the OpenStreetMap area bundled as map.json (tools/build-map.cjs): roads, paths,
+  // buildings, green space and water, without names. Outside that area the map is plain.
+  const MIN_MAP_ZOOM=-2, MAX_MAP_ZOOM=3, FT_PER_M=3.28084;
+  let mapZoom=0, mapData=null, mapLoading=false;
+  function setMapZoom(next) {
+    mapZoom=Math.max(MIN_MAP_ZOOM,Math.min(MAX_MAP_ZOOM,next));
+    $('map-in').disabled=mapZoom>=MAX_MAP_ZOOM; $('map-out').disabled=mapZoom<=MIN_MAP_ZOOM; drawMap();
+  }
+  // Feet east and north of `from` (flat-earth is plenty at these distances).
+  function offsetFeet(from,to) {
+    return {east:(to.lon-from.lon)*Math.cos(from.lat*Math.PI/180)*111320*FT_PER_M, north:(to.lat-from.lat)*110540*FT_PER_M};
+  }
+  // Decodes map.json once: each feature becomes absolute coordinates plus its bounding box.
+  function loadMap() {
+    if(mapData || mapLoading || typeof fetch!=='function') return;
+    mapLoading=true;
+    fetch('map.json').then(r=>r.ok?r.json():null).then(raw=>{
+      if(!raw?.layers || !Array.isArray(raw.bounds)) return;
+      const [lat0,lon0]=raw.bounds, q=raw.scale||1e5, layers={};
+      for(const [name,features] of Object.entries(raw.layers)) layers[name]=features.map(flat=>{
+        const pts=new Float64Array(flat.length); let la=0, lo=0, s=Infinity, w=Infinity, n=-Infinity, e=-Infinity;
+        for(let k=0;k<flat.length;k+=2) {la+=flat[k]; lo+=flat[k+1]; const lat=lat0+la/q, lon=lon0+lo/q; pts[k]=lat; pts[k+1]=lon; s=Math.min(s,lat); n=Math.max(n,lat); w=Math.min(w,lon); e=Math.max(e,lon);}
+        return {pts,s,w,n,e};
+      });
+      mapData={bounds:raw.bounds,layers,attribution:String(raw.attribution||'© OpenStreetMap contributors')}; drawMap();
+    }).catch(()=>{}).finally(()=>{mapLoading=false;});
+  }
+  const MAP_STYLE={
+    green:{fill:'#cfdcb2'}, water:{fill:'#a8c7cf'}, building:{fill:'#ddd3bd',stroke:'#c6baa0',width:0.75},
+    waterline:{stroke:'#8fb7c2',width:2}, rail:{stroke:'#9a9a8c',width:1.5,dash:[5,3]}, path:{stroke:'#b08b5e',width:1,dash:[3,2]},
+    minor:{stroke:'#ffffff',width:3,casing:'#d3cdb8'}, major:{stroke:'#f6d27a',width:5,casing:'#c9a24c'},
+  };
+  // Draws the bundled map under the view; true when any of it is in view.
+  function drawBase(ctx,me,w,h,ftPerPx) {
+    if(!mapData) {loadMap(); return false;}
+    const kx=Math.cos(me.lat*Math.PI/180)*111320*FT_PER_M/ftPerPx, ky=110540*FT_PER_M/ftPerPx, cx=w/2, cy=h/2;
+    const view={s:me.lat-cy/ky, n:me.lat+cy/ky, w:me.lon-cx/kx, e:me.lon+cx/kx}, [bs,bw,bn,be]=mapData.bounds;
+    if(bn<view.s || bs>view.n || be<view.w || bw>view.e) return false;
+    const trace=f=>{ctx.beginPath(); for(let k=0;k<f.pts.length;k+=2) {const x=cx+(f.pts[k+1]-me.lon)*kx, y=cy-(f.pts[k]-me.lat)*ky; k?ctx.lineTo(x,y):ctx.moveTo(x,y);}};
+    const visible=list=>list.filter(f=>f.n>=view.s && f.s<=view.n && f.e>=view.w && f.w<=view.e);
+    // Thinner lines zoomed out, a little bolder zoomed in.
+    const lw=Math.max(0.5,Math.min(1.5,2**(mapZoom/2)));
+    ctx.lineJoin='round'; ctx.lineCap='round';
+    for(const name of ['green','water','building','waterline','rail','path','minor','major']) {
+      const style=MAP_STYLE[name], list=visible(mapData.layers[name]||[]);
+      if(style.fill) {ctx.fillStyle=style.fill; list.forEach(f=>{trace(f); ctx.closePath(); ctx.fill(); if(style.stroke) {ctx.strokeStyle=style.stroke; ctx.lineWidth=style.width*lw; ctx.stroke();}}); continue;}
+      ctx.setLineDash(style.dash||[]);
+      if(style.casing) {ctx.strokeStyle=style.casing; ctx.lineWidth=(style.width+1.5)*lw; list.forEach(f=>{trace(f); ctx.stroke();});}
+      ctx.strokeStyle=style.stroke; ctx.lineWidth=style.width*lw; list.forEach(f=>{trace(f); ctx.stroke();});
+    }
+    ctx.setLineDash([]);
+    return true;
+  }
   function drawMap() {
     const canvas=$('crew-map'); if(!canvas || !$('crew-details').open) return;
     const area=sizeCanvas(canvas); if(!area) return;
-    const {ctx,w,h}=area, cx=w/2, cy=h/2, ringR=Math.min(w,h)/2-18, me=position();
-    ctx.clearRect(0,0,w,h); ctx.font="700 9px 'Space Grotesk',sans-serif"; ctx.textAlign='center'; ctx.textBaseline='middle';
+    const {ctx,w,h}=area, cx=w/2, cy=h/2, me=position();
+    const ftPerPx=2*rangeFeet/2**mapZoom/(Math.min(w,h)/2-10), ringR=rangeFeet/ftPerPx;
+    ctx.clearRect(0,0,w,h);
+    const based=!!me && drawBase(ctx,me,w,h,ftPerPx);
+    ctx.font="700 9px 'Space Grotesk',sans-serif"; ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillStyle='#82937d'; ctx.fillText('N',cx,8);
-    ctx.strokeStyle='#b8c4aa'; ctx.lineWidth=1; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.arc(cx,cy,ringR,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]);
-    ctx.textAlign='left'; ctx.fillText(rangeLabel(rangeFeet),cx+ringR*0.71+4,cy+ringR*0.71+4); ctx.textAlign='center';
+    if(based) {ctx.textAlign='left'; ctx.fillStyle='#6f7d6a'; ctx.fillText(mapData.attribution,6,h-8); ctx.textAlign='center';}
+    ctx.strokeStyle='#385446'; ctx.globalAlpha=0.55; ctx.lineWidth=1.5; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.arc(cx,cy,ringR,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha=1;
+    ctx.textAlign='left'; ctx.fillStyle='#385446'; ctx.fillText(rangeLabel(rangeFeet),cx+ringR*0.71+4,cy+ringR*0.71+4); ctx.textAlign='center';
     if(!me) {ctx.fillStyle='#93a18f'; ctx.fillText('WAITING FOR YOUR LOCATION',cx,cy); return;}
-    const scale=ringR/rangeFeet, edge=Math.min(w,h)/2-8, cosLat=Math.cos(me.lat*Math.PI/180);
+    const edgeX=w/2-10, edgeY=h/2-10;
     Object.entries(roster).forEach(([id,member])=>{
       if(id===selfId || !current(member.pos)) return;
-      // Feet east and north of you (flat-earth is plenty at these distances).
-      const east=(member.pos.lon-me.lon)*cosLat*111320*3.28084, north=(member.pos.lat-me.lat)*110540*3.28084;
-      let x=east*scale, y=-north*scale; const r=Math.hypot(x,y), near=inRange(me,member.pos), out=r>edge;
-      if(out) {x*=edge/r; y*=edge/r;}
+      const off=offsetFeet(me,member.pos);
+      let x=off.east/ftPerPx, y=-off.north/ftPerPx; const near=inRange(me,member.pos), fit=Math.max(Math.abs(x)/edgeX,Math.abs(y)/edgeY), out=fit>1;
+      // Off the map: pinned to its edge in their direction.
+      if(out) {x/=fit; y/=fit;}
       ctx.beginPath(); ctx.arc(cx+x,cy+y,9,0,Math.PI*2);
       ctx.fillStyle=out?'#eef2e1':near?(floor===id?'#e97d48':'#e9c779'):'#eab39a'; ctx.fill();
-      ctx.strokeStyle=near?'#385446':'#c47b5e'; ctx.lineWidth=out?1.5:1; ctx.stroke();
+      ctx.strokeStyle=near?'#385446':'#c47b5e'; ctx.lineWidth=1.5; ctx.stroke();
       ctx.fillStyle='#263e34'; ctx.fillText((member.name||'?').charAt(0).toUpperCase(),cx+x,cy+y+0.5);
     });
     ctx.beginPath(); ctx.arc(cx,cy,6,0,Math.PI*2); ctx.fillStyle='#385446'; ctx.fill();
-    ctx.beginPath(); ctx.arc(cx,cy,9,0,Math.PI*2); ctx.strokeStyle='#385446'; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx,cy,9,0,Math.PI*2); ctx.strokeStyle='#ffffff'; ctx.lineWidth=2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx,cy,10.5,0,Math.PI*2); ctx.strokeStyle='#385446'; ctx.lineWidth=1.5; ctx.stroke();
   }
   function setMode(next) {
-    mode=next; $('host-tab').classList.toggle('active',mode==='host'); $('join-tab').classList.toggle('active',mode==='join');
+    mode=next; rejoinRoom=null; $('host-tab').classList.toggle('active',mode==='host'); $('join-tab').classList.toggle('active',mode==='join');
     $('host-tab').setAttribute('aria-selected',mode==='host'); $('join-tab').setAttribute('aria-selected',mode==='join');
     $('room-name-wrap').hidden=mode!=='host'; $('code-wrap').hidden=mode!=='join'; $('start').firstChild.textContent=mode==='host'?'START A GROUP ':'JOIN THE GROUP '; msg('');
   }
   $('host-tab').onclick=()=>setMode('host'); $('join-tab').onclick=()=>setMode('join');
   if (window.TrailRadioNative) { $('check-update').hidden=false; $('check-update').onclick=()=>window.TrailRadioNative.checkForUpdates(); }
   $('permission-settings').onclick=()=>window.TrailRadioNative?.openAppSettings();
-  const urlRoom = new URL(location.href).searchParams.get('room'); if(urlRoom) $('code').value=urlRoom; setMode(mode);
+  const urlRoom = new URL(location.href).searchParams.get('room'); if(urlRoom) $('code').value=urlRoom; setMode(mode); showRecent();
   try {const saved=localStorage.getItem('trailRadioRange'); if(saved && [...$('range').options].some(o=>o.value===saved)) $('range').value=saved;} catch (_) {}
   function updateScreen() {
     if(!active) { $('screen-label').textContent='OFFLINE'; $('screen-main').textContent='READY?'; $('screen-sub').textContent='START OR JOIN A GROUP'; $('talk').disabled=true; return; }
@@ -140,7 +242,9 @@
     updateScreen(); enforceAudio();
   }
   function broadcast() {
-    const data={type:'state',roster,floor,groupName,range:rangeFeet}; Object.values(connections).forEach(c=>safeSend(c,data)); render();
+    // Member keys stay with the host: nobody else needs them.
+    const shared=Object.fromEntries(Object.entries(roster).map(([id,{key,...m}])=>[id,m]));
+    const data={type:'state',roster:shared,floor,groupName,range:rangeFeet}; Object.values(connections).forEach(c=>safeSend(c,data)); render();
   }
   function removeMember(id, conn) {
     if(connections[id]!==conn) return;
@@ -159,16 +263,26 @@
     conn.on('open',()=>{ if(!wantsGroup) {conn.close(); return;} connections[conn.peer]=conn; safeSend(conn,{type:'welcome-request'}); });
     conn.on('data',data=>{
       if(connections[conn.peer]!==conn) return;
-      if(data?.type==='hello') { roster[conn.peer]={name:clean(data.name)||'Wanderer',pos:null,host:false}; broadcast(); }
+      if(data?.type==='hello') {
+        const key=/^[a-f0-9]{32}$/.test(data.key||'')?data.key:null;
+        // The same device on an older connection: drop that entry and connection.
+        if(key) Object.keys(roster).forEach(id=>{
+          if(id===conn.peer || roster[id].key!==key) return;
+          const old=connections[id]; delete connections[id]; delete roster[id]; if(floor===id) floor=null;
+          try {calls[id]?.call.close();} catch (_) {} delete calls[id];
+          try {old?.close();} catch (_) {}
+        });
+        roster[conn.peer]={name:clean(data.name)||'Wanderer',pos:null,host:false,key}; broadcast();
+      }
       else onHostData(conn.peer,data);
     });
     conn.on('close',()=>removeMember(conn.peer,conn)); conn.on('error',()=>removeMember(conn.peer,conn));
   }
   function handleClientData(data) {
     if(!data) return;
-    if(data.type==='welcome-request') {safeSend(hostConn,{type:'hello',name:selfName}); sendPosition();}
+    if(data.type==='welcome-request') {safeSend(hostConn,{type:'hello',name:selfName,key:memberKey}); sendPosition();}
     if(data.type==='state') {
-      roster=data.roster||{}; floor=data.floor; groupName=data.groupName||'Your group'; rangeFeet=data.range==null?DEFAULT_RANGE_FT:cleanRange(data.range);
+      roster=data.roster||{}; floor=data.floor; if(data.groupName && data.groupName!==groupName) {groupName=data.groupName; if(active) rememberGroup();} groupName=groupName||'Your group'; rangeFeet=data.range==null?DEFAULT_RANGE_FT:cleanRange(data.range);
       if(roster[selfId]) {hostReady=true; clearTimeout(linkTimer); linkTimer=null; linkDeadline=0; if(!active) enter(); markRecovered();}
       render();
     }
@@ -198,7 +312,8 @@
   }
   function initialConnectionExpired() {
     if(!wantsGroup || active || !initialDeadline || Date.now()<initialDeadline) return;
-    cleanup(); msg(isHost?'Could not connect to the radio network. Check your connection and try again.':'Could not reach that group. Check the code and make sure the host is online.');
+    const room=roomId; cleanup(); if(!isHost) forgetGroup(room);
+    msg(isHost?'Could not connect to the radio network. Check your connection and try again.':'Could not reach that group. It may have ended; check the code and make sure the host is online.');
   }
   function schedulePeerRetry(immediate=false) {
     if(!wantsGroup || peerRetryTimer) return;
@@ -258,7 +373,7 @@
       selfId=id;
       if(watchId==null) {
         watchId=navigator.geolocation.watchPosition(p=>{lastPosition={lat:p.coords.latitude,lon:p.coords.longitude,time:Date.now()}; sendPosition();},()=>{if(nativeSession && document.hidden) return; lastPosition=null; release(); sendPosition(); msg('Location unavailable. Enable location to use the radio.');},{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
-        locationTimer=setInterval(()=>{if(!position()) release(); sendPosition(); refreshLocation();},10000);
+        locationTimer=setInterval(()=>{if(!position()) release(); sendPosition(); refreshLocation(); if(active) rememberGroup();},10000);
       }
       if(isHost) {
         if(!roster[selfId]) roster[selfId]={name:selfName,pos:position(),host:true};
@@ -348,18 +463,19 @@
   // A long press would otherwise open a context menu (and can drop the button's pressed look).
   $('talk').addEventListener('contextmenu',e=>e.preventDefault());
   $('crew-details').addEventListener('toggle',()=>drawMap());
+  $('map-in').onclick=()=>setMapZoom(mapZoom+1); $('map-out').onclick=()=>setMapZoom(mapZoom-1);
   window.addEventListener('blur',release); document.addEventListener('visibilitychange',()=>{if(document.hidden) release();});
   function enter() {
-    active=true; clearTimeout(initialTimer); initialTimer=null; initialDeadline=0; if (nativeSession) window.TrailRadioNative.radioConnected(groupName); document.body.classList.add('is-connected'); $('setup').hidden=true; $('connected').hidden=false; $('crew-details').hidden=false; $('room-code').textContent=roomId; $('connection-status').textContent='ON THE AIR'; msg(''); render(); window.scrollTo?.(0,0);
+    active=true; clearTimeout(initialTimer); initialTimer=null; initialDeadline=0; rejoinRoom=null; rememberGroup(); if (nativeSession) window.TrailRadioNative.radioConnected(groupName); document.body.classList.add('is-connected'); $('setup').hidden=true; $('connected').hidden=false; $('crew-details').hidden=false; $('room-code').textContent=roomId; $('connection-status').textContent='ON THE AIR'; msg(''); render(); window.scrollTo?.(0,0);
   }
   function cleanup() {
     wantsGroup=false; recovering=false; hostReady=false; clearRetryTimers();
     release(); active=false; if(nativeSession) { nativeSession=false; window.TrailRadioNative.stopRadioSession(); } document.body.classList.remove('is-connected'); clearInterval(locationTimer); if(watchId!=null) navigator.geolocation.clearWatch(watchId); watchId=null;
     Object.values(calls).forEach(x=>x.call.close()); calls={}; localStream?.getTracks().forEach(t=>t.stop()); localStream=null; localAnalyser=null;
     const oldPeer=peer; peer=null; hostConn=null; connections={}; roster={}; floor=null; lastPosition=null; selfId=null; oldPeer?.destroy();
-    $('setup').hidden=false; $('connected').hidden=true; $('crew-details').hidden=true; $('crew-details').open=false; $('start').disabled=false; updateScreen();
+    $('setup').hidden=false; $('connected').hidden=true; $('crew-details').hidden=true; $('crew-details').open=false; $('start').disabled=false; rejoinRoom=null; updateScreen(); showRecent();
   }
-  $('leave').onclick=()=>{cleanup(); msg('You left the group.');};
+  $('leave').onclick=()=>{const room=roomId; cleanup(); forgetGroup(room); msg('You left the group.');};
   $('copy').onclick=async()=>{
     const invite=new URL(location.hostname==='trailradio.local'?'trailradio://join':location.href); invite.search=''; invite.searchParams.set('room',roomId);
     const text=`Join my Big Walk Radio group “${groupName}”\n${invite.href}\nGroup code: ${roomId}`;
@@ -396,7 +512,7 @@
     e.preventDefault(); if(!window.Peer){msg('The radio network could not load. Check your internet connection and try again.');return;}
     if(!navigator.geolocation || !navigator.mediaDevices?.getUserMedia){msg(window.TrailRadioNative?'Your phone needs microphone and location support to use the radio.':'This browser needs HTTPS, microphone and location support to use the radio.');return;}
     selfName=clean($('name').value); if(!selfName)return; isHost=mode==='host';
-    roomId=isHost?'tr-'+Array.from(crypto.getRandomValues(new Uint8Array(8)),x=>x.toString(16).padStart(2,'0')).join(''):clean($('code').value).toLowerCase();
+    roomId=isHost?rejoinRoom||'tr-'+Array.from(crypto.getRandomValues(new Uint8Array(8)),x=>x.toString(16).padStart(2,'0')).join(''):clean($('code').value).toLowerCase();
     if(!/^tr-[a-f0-9]{16}$/.test(roomId)){msg('That group code doesn’t look right. Ask your host for a fresh invitation.');return;}
     startAudio(); groupName=isHost?(clean($('room-name').value)||'The Wanderers'):'Your group'; rangeFeet=isHost?cleanRange($('range').value):DEFAULT_RANGE_FT; if(isHost) {try {localStorage.setItem('trailRadioRange',String(rangeFeet));} catch (_) {}} $('start').disabled=true; $('permission-settings').hidden=true; msg('Getting your microphone and location ready…');
     let stage='permissions';

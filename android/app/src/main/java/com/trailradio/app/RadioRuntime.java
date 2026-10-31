@@ -53,8 +53,8 @@ final class RadioRuntime {
                 if (!"https".equals(uri.getScheme()) || !"trailradio.local".equals(uri.getHost())) return null;
                 String path = uri.getPath();
                 if (path == null || path.equals("/")) path = "/index.html";
-                if (!Arrays.asList("/index.html", "/style.css", "/app.js").contains(path)) return new WebResourceResponse("text/plain", "UTF-8", null);
-                String type = path.endsWith(".html") ? "text/html" : path.endsWith(".css") ? "text/css" : "text/javascript";
+                if (!Arrays.asList("/index.html", "/style.css", "/app.js", "/map.json").contains(path)) return new WebResourceResponse("text/plain", "UTF-8", null);
+                String type = path.endsWith(".html") ? "text/html" : path.endsWith(".css") ? "text/css" : path.endsWith(".json") ? "application/json" : "text/javascript";
                 try { return new WebResourceResponse(type, "UTF-8", app.getAssets().open(path.substring(1))); }
                 catch (IOException e) { return new WebResourceResponse("text/plain", "UTF-8", null); }
             }

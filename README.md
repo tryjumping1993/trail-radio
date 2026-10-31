@@ -4,7 +4,7 @@ A small push-to-talk group radio for Android and the web. The host keeps the cha
 
 ## Android
 
-Install `Trail-Radio.apk` from a GitHub release. Android invitations use a `trailradio://join` link and open on devices with Trail Radio installed. The app uses the bundled web files; the radio still depends on the external PeerJS signaling service, and some networks may block peer-to-peer calls.
+Install `Trail-Radio.apk` from a GitHub release. Android invitations use a `trailradio://join` link and open on devices with Trail Radio installed. The app checks public GitHub releases automatically about every six hours while in use; you can also tap **Check for updates**. Updates download without a GitHub account or API key, then Android asks you to allow installs from Trail Radio and confirm the installation. The app verifies the APK package and signing certificate before handing it to Android. Versions before 1.0.1 need a one-time manual installation of the newer APK. The app uses the bundled web files; the radio still depends on the external PeerJS signaling service, and some networks may block peer-to-peer calls.
 
 The APK is signed with a dedicated key stored **only on this PC** under `Z:\trail-radio-runner\signing`. Back it up securely: losing it prevents future APKs from updating existing installations. The key and password are not stored in this repository. The password file is encrypted for this Windows user on this PC; before replacing the PC, export the password securely while signed in as the same user and back it up separately from the keystore.
 

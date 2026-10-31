@@ -23,6 +23,7 @@
     $('room-name-wrap').hidden=mode!=='host'; $('code-wrap').hidden=mode!=='join'; $('start').firstChild.textContent=mode==='host'?'START A GROUP ':'JOIN THE GROUP '; msg('');
   }
   $('host-tab').onclick=()=>setMode('host'); $('join-tab').onclick=()=>setMode('join');
+  if (window.TrailRadioNative) { $('check-update').hidden=false; $('check-update').onclick=()=>window.TrailRadioNative.checkForUpdates(); }
   const urlRoom = new URL(location.href).searchParams.get('room'); if(urlRoom) $('code').value=urlRoom; setMode(mode);
   function updateScreen() {
     if(!active) { $('screen-label').textContent='OFFLINE'; $('screen-main').textContent='READY?'; $('screen-sub').textContent='YOUR NEXT ADVENTURE AWAITS'; $('talk').disabled=true; return; }

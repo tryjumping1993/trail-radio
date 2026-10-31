@@ -19,6 +19,7 @@ import java.util.Arrays;
 
 public class MainActivity extends Activity {
     private WebView web;
+    private UpdateManager updates;
     private PermissionRequest microphoneRequest;
     private GeolocationPermissions.Callback locationCallback;
     private String locationOrigin;
@@ -27,6 +28,7 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        updates = new UpdateManager(this);
         web = new WebView(this);
         setContentView(web);
         web.getSettings().setJavaScriptEnabled(true);
@@ -67,6 +69,7 @@ public class MainActivity extends Activity {
             }
         });
         openIntent(getIntent());
+        updates.start();
     }
     @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); openIntent(intent); }
     private void openIntent(Intent intent) {
@@ -84,12 +87,17 @@ public class MainActivity extends Activity {
             locationCallback.invoke(locationOrigin, granted, false); locationCallback = null; locationOrigin = null;
         }
     }
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == UpdateManager.INSTALL_SETTINGS) updates.onSettingsResult();
+    }
     private class ShareBridge {
+        @JavascriptInterface public void checkForUpdates() { updates.check(true); }
         @JavascriptInterface public void shareInvite(String text) {
             if (text == null || text.length() > 1000) return;
             runOnUiThread(() -> { Intent send = new Intent(Intent.ACTION_SEND); send.setType("text/plain"); send.putExtra(Intent.EXTRA_TEXT, text); startActivity(Intent.createChooser(send, "Invite your crew")); });
         }
     }
     @Override public void onBackPressed() { if (web.canGoBack()) web.goBack(); else super.onBackPressed(); }
-    @Override protected void onDestroy() { if (microphoneRequest != null) microphoneRequest.deny(); if (locationCallback != null) locationCallback.invoke(locationOrigin, false, false); web.destroy(); super.onDestroy(); }
+    @Override protected void onDestroy() { updates.stop(); if (microphoneRequest != null) microphoneRequest.deny(); if (locationCallback != null) locationCallback.invoke(locationOrigin, false, false); web.destroy(); super.onDestroy(); }
 }

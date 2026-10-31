@@ -13,6 +13,13 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
+      - name: Test update URL policy
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/trail-policy-tests" | Out-Null
+          & "$env:JAVA_HOME/bin/javac.exe" -d "$env:RUNNER_TEMP/trail-policy-tests" android/app/src/main/java/com/trailradio/app/UpdatePolicy.java android/tests/UpdatePolicyTest.java
+          if ($LASTEXITCODE -ne 0) { throw 'Could not compile update tests.' }
+          & "$env:JAVA_HOME/bin/java.exe" -cp "$env:RUNNER_TEMP/trail-policy-tests" com.trailradio.app.UpdatePolicyTest
+          if ($LASTEXITCODE -ne 0) { throw 'Update policy tests failed.' }
       - name: Build signed APK
         run: |
           $ErrorActionPreference = 'Stop'

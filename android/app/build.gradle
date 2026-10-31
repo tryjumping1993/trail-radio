@@ -1,0 +1,24 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.trailradio.app'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.trailradio.app'
+        minSdk 26
+        targetSdk 35
+        versionCode = (System.getenv('TRAIL_VERSION_CODE') ?: '1').toInteger()
+        versionName = (System.getenv('TRAIL_VERSION_NAME') ?: '1.0.0')
+    }
+    signingConfigs {
+        release {
+            storeFile file(System.getenv('TRAIL_KEYSTORE') ?: 'missing-release.keystore')
+            storePassword System.getenv('TRAIL_STORE_PASSWORD')
+            keyAlias = (System.getenv('TRAIL_KEY_ALIAS') ?: 'trailradio')
+            keyPassword System.getenv('TRAIL_KEY_PASSWORD')
+        }
+    }
+    buildTypes { release { minifyEnabled false; signingConfig signingConfigs.release } }
+    sourceSets.main.assets.srcDirs = ['../../dist']
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}

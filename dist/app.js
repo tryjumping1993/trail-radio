@@ -142,9 +142,9 @@
   }
   $('leave').onclick=()=>{cleanup(); msg('You left the group.');};
   $('copy').onclick=async()=>{
-    const invite=new URL(location.href); invite.search=''; invite.searchParams.set('room',roomId);
+    const invite=new URL(location.hostname==='trailradio.local'?'trailradio://join':location.href); invite.search=''; invite.searchParams.set('room',roomId);
     const text=`Join my Trail Radio group “${groupName}”\n${invite.href}\nGroup code: ${roomId}`;
-    try {if(navigator.share) await navigator.share({title:'Join my Trail Radio group',text,url:invite.href}); else {await navigator.clipboard.writeText(text); msg('Invitation copied. Send it to your crew!');}} catch(e) {if(e.name!=='AbortError') {try{await navigator.clipboard.writeText(text);msg('Invitation copied. Send it to your crew!');}catch(_){msg('Copy this group code and send it to your crew: '+roomId);}}}
+    try {if(window.TrailRadioNative) { window.TrailRadioNative.shareInvite(text); } else if(navigator.share) await navigator.share({title:'Join my Trail Radio group',text}); else {await navigator.clipboard.writeText(text); msg('Invitation copied. Send it to your crew!');}} catch(e) {if(e.name!=='AbortError') {try{await navigator.clipboard.writeText(text);msg('Invitation copied. Send it to your crew!');}catch(_){msg('Copy this group code and send it to your crew: '+roomId);}}}
   };
   function getLocation() {return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,timeout:20000,maximumAge:10000}));}
   $('setup-form').onsubmit=async e=>{

@@ -1,6 +1,11 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
+  // The backdrop is mustard or blue, picked at random each time the app opens.
+  const THEMES={mustard:'#e8b95f',blue:'#8fb8de'}, theme=Math.random()<0.5?'mustard':'blue';
+  document.documentElement?.classList?.add('theme-'+theme);
+  document.querySelector?.('meta[name="theme-color"]')?.setAttribute('content',THEMES[theme]);
+  try {window.TrailRadioNative?.setBackdrop?.(theme);} catch (_) {}
   // Talk range in feet: the host picks it (up to a mile) and shares it with the group.
   const DEFAULT_RANGE_FT = 1500, MIN_RANGE_FT = 100, MAX_RANGE_FT = 5280, FRESH = 30000;
   let rangeFeet = DEFAULT_RANGE_FT;
@@ -552,5 +557,121 @@
       else msg(denied?'Allow microphone and location access in your browser settings, then try again.':'Could not start the radio. Check your connection and try again.');
     }
   };
+  // ----- Pixel art: a hiker on the radio screen and critters in the background -----
+  // Sprites are rows of palette letters ('.' is clear), facing right; each frame shares the
+  // rows above its legs.
+  const HIKER_TOP=[
+    '...kkkk......',
+    '..kssssk.....',
+    '.kssssssk....',
+    '.ksssskskk...',
+    '.ksssssssssk.',
+    '.ksssssskkk..',
+    '..kssssk.....',
+    '..kssssk.yyy.',
+    '.kssssssky.y.',
+    'ksssssssskyyy',
+    'kssssssssk.y.',
+    'kssssssssk.yy',
+    '.kssssssk....',
+    '..kkkkkk.....',
+  ];
+  const HIKER={
+    palette:{k:'#263e34',s:'#f4ecd8',y:'#eac273'},
+    frames:[
+      [...HIKER_TOP,'..kk..kk.....','.kkk..kkk....'],
+      [...HIKER_TOP,'.kk....kk....','kkk....kkk...'],
+      [...HIKER_TOP,'...kkkk......','...kkkk......'],
+    ],
+  };
+  const DINO_TOP=[
+    '........gggg..',
+    '.......ggkggg.',
+    '.......gggggg.',
+    '.......gggg...',
+    'g.....ggggg...',
+    'gg...ggggggg..',
+    '.gggggggggg...',
+    '..gggggggg....',
+  ];
+  const DINO_FRAMES=[[...DINO_TOP,'...gg...gg....','...dd...dd....'],[...DINO_TOP,'....gg.gg.....','....dd.dd.....']];
+  const CAT_TOP=['.........o.o','o........ooo','o........oko','.o.ooooooooo','..oooooooo..','..oooooooo..'];
+  const CAT_FRAMES=[[...CAT_TOP,'..o.o..o.o..','..o.o..o.o..'],[...CAT_TOP,'...o.o..o.o.','..o...o...o.']];
+  const CRITTERS=[
+    {frames:DINO_FRAMES,palette:{g:'#7fa35b',d:'#4f7038',k:'#263e34'},speed:16},
+    {frames:CAT_FRAMES,palette:{o:'#d9894a',k:'#263e34'},speed:22},
+    {frames:DINO_FRAMES,palette:{g:'#9bb7c4',d:'#5f8494',k:'#263e34'},speed:13},
+    {frames:CAT_FRAMES,palette:{o:'#7d8178',k:'#f9f7e8'},speed:19},
+  ];
+  // Draws `rows` with its top-left at device pixel (x, y), `px` device pixels per art pixel.
+  function drawSprite(ctx,rows,palette,x,y,px,flip) {
+    const width=rows[0].length;
+    rows.forEach((row,r)=>{for(let c=0;c<width;c++) {
+      const color=palette[row[c]]; if(!color) continue;
+      ctx.fillStyle=color; ctx.fillRect(Math.round(x+(flip?width-1-c:c)*px),Math.round(y+r*px),px,px);
+    }});
+  }
+  const reducedMotion=!!window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+
+  // The hiker walks clockwise around the outside of the radio screen's frame, feet on the
+  // border (upright along the top, sideways down the right, upside down along the bottom, and up
+  // the left), from the top-left corner, only while someone is talking; between transmissions it
+  // waits where it stopped.
+  const hiker={d:0,step:0,last:0};
+  function drawHiker(now) {
+    const canvas=$('walker'), card=canvas?.parentElement; if(!canvas?.getContext || !card?.getBoundingClientRect) return;
+    const ratio=window.devicePixelRatio||1, W=canvas.clientWidth, H=canvas.clientHeight; if(!W || !H) return;
+    if(canvas.width!==Math.round(W*ratio) || canvas.height!==Math.round(H*ratio)) {canvas.width=Math.round(W*ratio); canvas.height=Math.round(H*ratio);}
+    // The card's outer edges in the canvas, which reaches past the card on every side.
+    const c=card.getBoundingClientRect(), o=canvas.getBoundingClientRect(), left=c.left-o.left, top=c.top-o.top, cw=c.width, ch=c.height;
+    const ctx=canvas.getContext('2d'), px=Math.max(1,Math.round(1.25*ratio)), rows=HIKER.frames[0], sw=rows[0].length*px, sh=rows.length*px;
+    const perimeter=2*(cw+ch), moving=active && !!floor, dt=hiker.last?Math.min(0.1,(now-hiker.last)/1000):0; hiker.last=now;
+    if(moving) {hiker.d=(hiker.d+38*dt)%perimeter; hiker.step+=dt;}
+    let d=hiker.d, x, y, turn;
+    if(d<cw) {x=left+d; y=top; turn=0;}
+    else if((d-=cw)<ch) {x=left+cw; y=top+d; turn=1;}
+    else if((d-=ch)<cw) {x=left+cw-d; y=top+ch; turn=2;}
+    else {d-=cw; x=left; y=top+ch-d; turn=3;}
+    const frame=moving?[1,0,2,0][Math.floor(hiker.step*7)%4]:0;
+    ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,canvas.width,canvas.height);
+    // Feet on the edge point, the body standing away from the card.
+    ctx.translate(Math.round(x*ratio),Math.round(y*ratio)); ctx.rotate(turn*Math.PI/2);
+    drawSprite(ctx,HIKER.frames[frame],HIKER.palette,-Math.round(sw/2),-sh+px,px,false);
+  }
+
+  // Cats and dinosaurs wander the page background, behind the cards: each walks to a random
+  // spot, stands a while, and picks another.
+  const critters=CRITTERS.map((kind,i)=>({...kind,x:40+i*70,y:120+i*160,tx:null,ty:null,wait:i,facing:i%2?-1:1,step:0}));
+  let critterLast=0;
+  function drawCritters(now) {
+    const canvas=$('critters'); if(!canvas?.getContext) return;
+    const ratio=window.devicePixelRatio||1, W=window.innerWidth||canvas.clientWidth, H=window.innerHeight||canvas.clientHeight; if(!W || !H) return;
+    if(canvas.width!==Math.round(W*ratio) || canvas.height!==Math.round(H*ratio)) {canvas.width=Math.round(W*ratio); canvas.height=Math.round(H*ratio);}
+    const ctx=canvas.getContext('2d'), px=Math.max(1,Math.round(2*ratio)), dt=critterLast?Math.min(0.1,(now-critterLast)/1000):0; critterLast=now;
+    ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,canvas.width,canvas.height);
+    critters.forEach(c=>{
+      const cw=c.frames[0][0].length*px/ratio, ch=c.frames[0].length*px/ratio;
+      let moving=false;
+      if(!reducedMotion) {
+        if(c.wait>0) c.wait-=dt;
+        else {
+          if(c.tx==null) {c.tx=Math.random()*Math.max(1,W-cw); c.ty=Math.random()*Math.max(1,H-ch);}
+          const dx=c.tx-c.x, dy=c.ty-c.y, dist=Math.hypot(dx,dy), stepLen=c.speed*dt;
+          if(dist<=stepLen) {c.x=c.tx; c.y=c.ty; c.tx=null; c.wait=1+Math.random()*4;}
+          else {c.x+=dx/dist*stepLen; c.y+=dy/dist*stepLen; if(Math.abs(dx)>1) c.facing=dx<0?-1:1; moving=true; c.step+=dt;}
+        }
+      }
+      c.x=Math.min(Math.max(0,c.x),Math.max(0,W-cw)); c.y=Math.min(Math.max(0,c.y),Math.max(0,H-ch));
+      drawSprite(ctx,c.frames[moving?Math.floor(c.step*6)%2:0],c.palette,Math.round(c.x*ratio),Math.round(c.y*ratio),px,c.facing<0);
+    });
+  }
+  // About 15 frames a second is plenty for 8-bit art. Hidden pages get no frames, so this
+  // stops by itself in the background.
+  let pixelLast=0;
+  function pixelFrame(now) {
+    if(now-pixelLast>=66) {pixelLast=now; drawHiker(now); drawCritters(now);}
+    window.requestAnimationFrame(pixelFrame);
+  }
+  if(window.requestAnimationFrame) window.requestAnimationFrame(pixelFrame);
   window.addEventListener('pagehide',()=>{release(); if(!window.TrailRadioNative) peer?.destroy();});
 })();

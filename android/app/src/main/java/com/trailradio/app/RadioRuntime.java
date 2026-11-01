@@ -25,6 +25,9 @@ import java.util.Arrays;
 final class RadioRuntime {
     static final String ORIGIN = "https://trailradio.local";
     private static volatile RadioRuntime instance;
+    /** The page's backdrop colour (it picks mustard or blue), shown behind it by the activity. */
+    private volatile int backdrop = 0xffe8b95f;
+    int backdrop() { return backdrop; }
     private final Context app;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final MutableContextWrapper webContext;
@@ -138,6 +141,11 @@ final class RadioRuntime {
         @JavascriptInterface public void stopRadioSession() { main.post(RadioRuntime.this::stopSession); }
         @JavascriptInterface public void radioConnected(String group) { main.post(() -> { connected = true; RadioService service = RadioService.current(); if (service != null) service.updateGroup(group); MainActivity host = activity.get(); if (host != null) host.maybeRequestBatteryExemption(); }); }
         @JavascriptInterface public void radioNetworkStatus(boolean ready) { main.post(() -> { RadioService service = RadioService.current(); if (service != null) service.updateNetwork(ready); }); }
+        @JavascriptInterface public void setBackdrop(String theme) {
+            int color = "blue".equals(theme) ? 0xff8fb8de : 0xffe8b95f;
+            backdrop = color;
+            MainActivity host = activity.get(); if (host != null) host.runOnUiThread(() -> host.setBackdrop(color));
+        }
         @JavascriptInterface public void openAppSettings() { MainActivity host = activity.get(); if (host != null) host.runOnUiThread(host::openAppSettings); }
         @JavascriptInterface public void checkForUpdates() { MainActivity host = activity.get(); if (host != null) host.runOnUiThread(host::checkForUpdates); }
         @JavascriptInterface public void shareInvite(String text) { MainActivity host = activity.get(); if (host != null && text != null && text.length() <= 1000) host.runOnUiThread(() -> host.shareInvite(text)); }

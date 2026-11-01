@@ -23,17 +23,19 @@ public class MainActivity extends Activity {
     private WebView web;
     private RadioRuntime runtime;
     private UpdateManager updates;
+    private FrameLayout root;
     private PermissionRequest microphoneRequest;
     private GeolocationPermissions.Callback locationCallback;
     private String locationOrigin;
     private static final int MIC_REQUEST = 101, LOCATION_REQUEST = 102, PHONE_PERMISSIONS_REQUEST = 104, NOTIFICATION_REQUEST = 105;
 
+    void setBackdrop(int color) { if (root != null) root.setBackgroundColor(color); }
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         updates = new UpdateManager(this);
         runtime = RadioRuntime.get(this);
-        FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(0xffe8b95f);
+        root = new FrameLayout(this);
+        root.setBackgroundColor(runtime.backdrop());
         runtime.attach(this, root);
         web = runtime.web();
         if (Build.VERSION.SDK_INT >= 35) {

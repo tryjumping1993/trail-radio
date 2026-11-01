@@ -190,5 +190,15 @@ async function createScenario(mode, range='1500', saved=new Map()) {
   quiet.skip(1000); press(5); assert.equal(qc.sent.at(-1).roster[qp.id].hidden,false,'and five more switch it back');
   qc.emit('data',{type:'visibility',hidden:true}); assert.equal(qc.sent.at(-1).roster['guest-q'].hidden,true,'a guest can switch it too');
   quiet.get('leave').onclick();
+  // The home-screen widget: tap to talk, tap again to stop, and a minute at most.
+  const widget=await createScenario('host');
+  widget.peers[0].opened();
+  assert.equal(widget.window.radioWidgetState().state,'open');
+  widget.window.radioWidgetToggle(); assert.equal(widget.window.radioWidgetState().state,'talking','a tap starts talking');
+  widget.window.radioWidgetToggle(); assert.equal(widget.window.radioWidgetState().state,'open','the next tap stops');
+  widget.window.radioWidgetToggle(); widget.skip(61000);
+  assert.notEqual(widget.window.radioWidgetState().state,'talking','a widget transmission ends after a minute');
+  widget.get('leave').onclick();
+  assert.equal(widget.window.radioWidgetState().state,'offline');
   console.log('Reconnection and background heartbeat checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

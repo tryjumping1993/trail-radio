@@ -14,6 +14,12 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <application android:label="Big Walk Radio" android:theme="@style/AppTheme" android:usesCleartextTraffic="false" android:allowBackup="false">
         <service android:name=".RadioService" android:exported="false" android:foregroundServiceType="microphone|location" android:stopWithTask="false" />
+        <receiver android:name=".RadioWidget" android:exported="false" android:label="Big Walk Radio">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/radio_widget_info" />
+        </receiver>
         <provider android:name=".UpdateProvider" android:authorities="${applicationId}.updates" android:exported="false" android:grantUriPermissions="true" />
         <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
             <intent-filter>

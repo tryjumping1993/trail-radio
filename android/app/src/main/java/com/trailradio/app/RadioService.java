@@ -20,6 +20,7 @@ import android.os.IBinder;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import org.json.JSONObject;
 
 /** Keeps an active radio session and location updates alive while its screen is hidden. */
 public final class RadioService extends Service {
@@ -40,6 +41,32 @@ public final class RadioService extends Service {
             handler.postDelayed(this, 10000);
         }
     };
+    // The home-screen widgets follow the page: several times a second while there is audio to
+    // draw, every second otherwise (only redrawn when something changed), and not at all
+    // without widgets. One request runs at a time.
+    private boolean widgetPending;
+    private String widgetShown = "";
+    private final Runnable widgetLoop = new Runnable() {
+        @Override public void run() {
+            if (widgetPending) return;
+            RadioRuntime runtime = RadioRuntime.existing();
+            if (runtime == null || RadioWidget.ids(RadioService.this).length == 0) { handler.postDelayed(this, 5000); return; }
+            widgetPending = true;
+            runtime.widgetState(json -> {
+                widgetPending = false;
+                if (current != RadioService.this) return;
+                JSONObject state = null;
+                try { if (json != null && !"null".equals(json)) state = new JSONObject(json); } catch (Exception ignored) { }
+                boolean live = state != null && state.optJSONArray("wave") != null && state.optJSONArray("wave").length() > 0;
+                String key = String.valueOf(json);
+                if (live || !key.equals(widgetShown)) RadioWidget.show(RadioService.this, state);
+                widgetShown = key;
+                handler.postDelayed(widgetLoop, live ? 150 : 1000);
+            });
+        }
+    };
+    /** Redraws the widgets right away (after a tap on one). */
+    void refreshWidgetSoon() { widgetShown = ""; handler.removeCallbacks(widgetLoop); handler.postDelayed(widgetLoop, 120); }
     private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
         @Override public void onAvailable(Network network) {
             RadioRuntime runtime = RadioRuntime.existing();
@@ -72,6 +99,7 @@ public final class RadioService extends Service {
                 } catch (RuntimeException error) { connectivity = null; }
             }
             handler.removeCallbacks(tick); handler.postDelayed(tick, 10000);
+            handler.removeCallbacks(widgetLoop); handler.post(widgetLoop);
             RadioRuntime runtime = RadioRuntime.existing();
             if (runtime != null) runtime.serviceStarted(true); else stopSelf();
         } catch (RuntimeException error) {
@@ -125,6 +153,8 @@ public final class RadioService extends Service {
     @Override public IBinder onBind(Intent intent) { return null; }
     @Override public void onDestroy() {
         handler.removeCallbacks(tick);
+        handler.removeCallbacks(widgetLoop);
+        RadioWidget.show(this, null);
         if (connectivity != null) { try { connectivity.unregisterNetworkCallback(networkCallback); } catch (RuntimeException ignored) { } connectivity = null; }
         if (locations != null) { try { locations.removeUpdates(listener); } catch (SecurityException ignored) { } locations = null; }
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();

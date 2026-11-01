@@ -125,6 +125,14 @@ final class RadioRuntime {
         if (!sessionRequested || !Double.isFinite(latitude) || !Double.isFinite(longitude)) return;
         execute("window.radioNativeLocation && window.radioNativeLocation(" + latitude + "," + longitude + "," + timestamp + ")");
     }
+    /** The page's radioWidgetState as JSON ("null" without a session), on the main thread. */
+    void widgetState(android.webkit.ValueCallback<String> callback) {
+        main.post(() -> {
+            if (instance == this && sessionRequested) web.evaluateJavascript("window.radioWidgetState ? window.radioWidgetState() : null", callback);
+            else callback.onReceiveValue(null);
+        });
+    }
+    void widgetToggle() { if (sessionRequested) execute("window.radioWidgetToggle && window.radioWidgetToggle()"); }
     void backgroundTick() { if (sessionRequested) execute("window.radioBackgroundTick && window.radioBackgroundTick()"); }
     void networkAvailable() { main.post(() -> { if (sessionRequested) execute("window.radioNetworkAvailable && window.radioNetworkAvailable()"); }); }
     void phonePermissionResult(boolean ok) { execute("window.trailRadioPermissionResult && window.trailRadioPermissionResult(" + ok + ")"); }

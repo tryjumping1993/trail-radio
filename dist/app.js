@@ -414,6 +414,32 @@
     if(hostRetryTimer && Date.now()>=hostRetryAt) retryHost();
   };
   window.addEventListener('online',window.radioNetworkAvailable);
+  // The Android home-screen widget polls radioWidgetState while a group is active and talks
+  // through radioWidgetToggle. A widget only knows taps, so a tap starts talking and the next one
+  // stops; a transmission started there ends by itself after a minute.
+  const WIDGET_TALK_MS=60000; let widgetTalkUntil=0, widgetWave=null;
+  window.radioWidgetState=()=>{
+    if(widgetTalkUntil && (!held || Date.now()>widgetTalkUntil)) {const expired=held; widgetTalkUntil=0; if(expired) release();}
+    let state='open';
+    if(!active) state='offline';
+    else if(recovering) state='reconnecting';
+    else if(held && floor!==selfId) state='waiting';
+    else if(floor===selfId) state='talking';
+    else if(floor) state='listening';
+    else if(!position()) state='no-location';
+    const wave=[], analyser=audibleAnalyser();
+    if(analyser) {
+      if(!widgetWave || widgetWave.length!==analyser.fftSize) widgetWave=new Uint8Array(analyser.fftSize);
+      analyser.getByteTimeDomainData(widgetWave);
+      for(let i=0, step=widgetWave.length/48; i<48; i++) wave.push(Math.round((widgetWave[Math.floor(i*step)]-128)/1.28)/100);
+    }
+    return {state, group:active?groupName:'', speaker:floor && floor!==selfId?(roster[floor]?.name||''):'', wave};
+  };
+  window.radioWidgetToggle=()=>{
+    if(!active) return;
+    if(held || floor===selfId) {widgetTalkUntil=0; release(); return;}
+    requestTalk(); if(held) widgetTalkUntil=Date.now()+WIDGET_TALK_MS;
+  };
   function sendPosition() {
     if(!selfId) return;
     if(isHost) { if(roster[selfId]) {roster[selfId].pos=position(); broadcast();} }

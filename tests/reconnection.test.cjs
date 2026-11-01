@@ -25,6 +25,7 @@ async function createScenario(mode, range='1500', saved=new Map()) {
     constructor(){this.listeners={};this.hidden=false;this.disabled=false;this.value='';this.textContent='';this.firstChild={textContent:''};this.classList={add(){},remove(){},toggle(){}};}
     addEventListener(name,fn){(this.listeners[name]||=[]).push(fn);} dispatch(name,e={}){(this.listeners[name]||[]).forEach(fn=>fn({preventDefault(){},pointerId:1,...e}));}
     setPointerCapture(){} setAttribute(){} remove(){}
+    play(){this.played=true;return Promise.resolve();}
     replaceChildren(...c){this.children=c;} append(...c){this.children=[...(this.children||[]),...c];}
     requestSubmit(){return this.onsubmit?.({preventDefault(){}});}
   }
@@ -163,6 +164,38 @@ async function createScenario(mode, range='1500', saved=new Map()) {
   extended.get('talk').dispatch('pointerdown'); extended.advance(250);
   assert.deepEqual(recipients,['inside'],'audio reaches a member just inside five miles, but not beyond');
   extended.get('talk').dispatch('pointerup'); extended.get('leave').onclick();
+  // Signaling and group-state messages travel independently: the media offer can arrive first.
+  const listener=await createScenario('join');
+  const lp=listener.peers[0]; lp.opened(); listener.advance(0);
+  const lc=lp.links[0]; lc.open=true;
+  const listeningState=(floor,lat=1)=>lc.emit('data',{type:'state',groupName:'Crew',floor,range:26400,roster:{
+    [lp.id]:{name:'Sunny',pos:{lat:1,lon:1,time:100000}},
+    speaker:{name:'Fern',pos:{lat,lon:1,time:100000},host:true}
+  }});
+  class MediaCall {
+    constructor(peer='speaker'){this.peer=peer;this.events={};this.answered=false;this.closed=false;}
+    on(event,fn){(this.events[event]||=[]).push(fn);return this;}
+    emit(event,data){(this.events[event]||[]).forEach(fn=>fn(data));}
+    answer(){this.answered=true;this.emit('stream',{});}
+    close(){this.closed=true;this.emit('close');}
+  }
+  listeningState(null);
+  const early=new MediaCall(); lp.emit('call',early);
+  assert.equal(early.closed,false,'an early media offer is retained');
+  assert.equal(early.answered,false,'audio is not answered before host authorization');
+  listener.advance(1500); listeningState('speaker');
+  assert.equal(early.answered,true,'a delayed floor announcement starts the retained call');
+  early.close(); listeningState(null);
+  const unauthorized=new MediaCall(); lp.emit('call',unauthorized); listener.advance(8000);
+  assert.equal(unauthorized.answered,false); assert.equal(unauthorized.closed,true,'unauthorized offers expire');
+  listeningState('speaker',2);
+  const outside=new MediaCall(); lp.emit('call',outside); listener.advance(8000);
+  assert.equal(outside.answered,false); assert.equal(outside.closed,true,'floor ownership cannot bypass GPS range');
+  const unknown=new MediaCall('unknown'); lp.emit('call',unknown);
+  assert.equal(unknown.closed,true,'calls from outside the group are rejected');
+  listeningState(null);
+  const abandoned=new MediaCall(); lp.emit('call',abandoned); listener.get('leave').onclick();
+  assert.equal(abandoned.closed,true,'leaving closes early offers immediately');
   // A member who comes back on a new connection (switched apps, reloaded) is counted once.
   const dedupe=await createScenario('host');
   const dp=dedupe.peers[0]; dp.opened();

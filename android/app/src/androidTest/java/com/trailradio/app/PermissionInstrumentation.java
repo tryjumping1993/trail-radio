@@ -78,6 +78,62 @@ public final class PermissionInstrumentation extends Instrumentation {
         throw new AssertionError("Timed out: " + script + " => " + value);
     }
     private int idleSeconds() { try { return Math.max(0, Integer.parseInt(arguments.getString("idle", "0"))); } catch (RuntimeException e) { return 0; } }
+    private long touchDownTime;
+    private void touchTalk(Activity activity, WebView web, boolean down) throws Exception {
+        if (down) {
+            getTargetContext().startActivity(new Intent().setClassName(getTargetContext(), MainActivity.class.getName())
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            Thread.sleep(1000);
+            eval(activity, web, "document.getElementById('talk').scrollIntoView({block:'center'})");
+        }
+        org.json.JSONArray point = new org.json.JSONArray(eval(activity, web,
+            "(()=>{const r=document.getElementById('talk').getBoundingClientRect();return [(r.left+r.width/2)*devicePixelRatio,(r.top+r.height/2)*devicePixelRatio];})()"));
+        activity.runOnUiThread(() -> {
+            long now = android.os.SystemClock.uptimeMillis();
+            if (down) touchDownTime = now;
+            android.view.MotionEvent event = android.view.MotionEvent.obtain(touchDownTime, now,
+                down ? android.view.MotionEvent.ACTION_DOWN : android.view.MotionEvent.ACTION_UP,
+                (float) point.optDouble(0), (float) point.optDouble(1), 0);
+            web.dispatchTouchEvent(event); event.recycle();
+        });
+        Thread.sleep(250);
+    }
+    /** Deterministic tone through real WebRTC; a playing event alone can also mean silence. */
+    private void audioProbe(Activity activity, WebView web, String role, Bundle result) throws Exception {
+        boolean host = "audio-host".equals(role);
+        String room = arguments.getString("room", "");
+        int delay = Integer.parseInt(arguments.getString("stateDelay", "0"));
+        eval(activity, web, "window.__probeAudio=[];window.__probeCalls=[];window.__probeContext=new AudioContext();"
+            + "const create=document.createElement.bind(document);document.createElement=(tag,...args)=>{const e=create(tag,...args);if(tag==='audio')window.__probeAudio.push(e);return e;};"
+            + "navigator.mediaDevices.getUserMedia=async()=>{const c=window.__probeContext;c.resume();const dest=c.createMediaStreamDestination(),o=c.createOscillator(),g=c.createGain();o.frequency.value=440;g.gain.value=0.2;o.connect(g).connect(dest);o.start();return dest.stream;};"
+            + "const P=window.Peer;window.Peer=class extends P{constructor(...a){super(...a);window.__probePeer=this;}emit(event,...args){if(event==='call')window.__probeCalls.push(args[0]);if(event==='connection')this.track(args[0]);return super.emit(event,...args);}connect(...a){const c=super.connect(...a);this.track(c);return c;}track(c){const emit=c.emit.bind(c);c.emit=(event,data,...a)=>{if(event==='data'&&" + delay + ">0){setTimeout(()=>emit(event,data,...a)," + delay + ");return true;}return emit(event,data,...a);};}};"
+            + "window.__probeHeard=()=>window.__probeAudio.some(a=>{if(a.muted||a.paused||!a.srcObject)return false;if(!a.__meter){a.__meter=window.__probeContext.createAnalyser();window.__probeContext.createMediaStreamSource(a.srcObject).connect(a.__meter);}const d=new Float32Array(a.__meter.fftSize);a.__meter.getFloatTimeDomainData(d);return d.some(v=>Math.abs(v)>0.01);});");
+        if (!host) eval(activity, web, "document.getElementById('join-tab').click();document.getElementById('code').value='" + room + "';");
+        eval(activity, web, "document.getElementById('range').value='26400';document.getElementById('name').value='" + role + "';document.getElementById('room-name').value='Audio Probe';document.getElementById('setup-form').requestSubmit();");
+        waitFor(activity, web, "document.getElementById('connected').hidden", "false", 45);
+        if (host) {
+            room = new org.json.JSONArray("[" + eval(activity, web, "document.getElementById('room-code').textContent") + "]").getString(0);
+            Bundle ready = new Bundle(); ready.putString("phase", "audio-host-ready"); ready.putString("room", room); sendStatus(1, ready);
+            waitFor(activity, web, "document.getElementById('count').textContent", "\"02\"", 45);
+            Thread.sleep(5000);
+            touchTalk(activity, web, true);
+            waitFor(activity, web, "document.getElementById('screen-main').textContent", "\"YOU’RE ON!\"", 10);
+            Thread.sleep(12000);
+            touchTalk(activity, web, false);
+            waitFor(activity, web, "window.__probeHeard()", "true", 30);
+            Thread.sleep(4000);
+        } else {
+            Bundle ready = new Bundle(); ready.putString("phase", "audio-client-ready"); sendStatus(1, ready);
+            waitFor(activity, web, "window.__probeHeard()", "true", 25);
+            waitFor(activity, web, "document.getElementById('screen-label').textContent", "\"CHANNEL OPEN\"", 25);
+            touchTalk(activity, web, true);
+            waitFor(activity, web, "document.getElementById('screen-main').textContent", "\"YOU’RE ON!\"", 10);
+            Thread.sleep(10000);
+            touchTalk(activity, web, false);
+        }
+        result.putString("result", "PASS: bidirectional non-silent WebRTC audio at five-mile range setting; delayed state=" + delay + "ms");
+        eval(activity, web, "document.getElementById('leave').click()");
+    }
     private void backgroundPeerTest(Activity activity, WebView web, String role, Bundle result) throws Exception {
         String room = arguments.getString("room", "");
         boolean hostRole = role.startsWith("host"), clientRole = role.startsWith("client"), injectDisconnect = role.endsWith("reconnect");
@@ -148,6 +204,7 @@ public final class PermissionInstrumentation extends Instrumentation {
             for (int i=0; i<45; i++) { state = eval(activity, web, "document.readyState"); if (state.contains("complete")) break; Thread.sleep(1000); }
             if (!state.contains("complete")) throw new AssertionError("WebView page did not finish loading: " + state);
             String role = arguments == null ? "" : arguments.getString("role", "");
+            if (role.startsWith("audio-")) { audioProbe(activity, web, role, result); finish(Activity.RESULT_OK,result); return; }
             if (role.startsWith("host") || role.startsWith("client")) { backgroundPeerTest(activity, web, role, result); finish(Activity.RESULT_OK,result); return; }
             if ("no-notification".equals(role) || "battery-prompt".equals(role)) {
                 if ("no-notification".equals(role)) activity.getPreferences(Activity.MODE_PRIVATE).edit().putBoolean("asked_radio_notifications", true).apply();

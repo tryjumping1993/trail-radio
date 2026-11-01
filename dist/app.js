@@ -15,7 +15,7 @@
   const rangeLabel = ft => ft >= 5280 && ft % 5280 === 0 ? `${ft / 5280} MILE${ft === 5280 ? '' : 'S'}` : ft === 2640 ? '½ MILE' : ft === 3960 ? '¾ MILE' : `${ft.toLocaleString('en-US')} FT`;
   let mode = new URL(location.href).searchParams.has('room') ? 'join' : 'host';
   let peer, hostConn, localStream, watchId, roomId, selfId, selfName, groupName, isHost = false;
-  let roster = {}, connections = {}, calls = {}, floor = null, held = false, active = false, nativeSession = false, lastPosition = null, locationTimer, holdTimer;
+  let roster = {}, connections = {}, calls = {}, pendingCalls = {}, floor = null, held = false, active = false, nativeSession = false, lastPosition = null, locationTimer, holdTimer;
   let wantsGroup=false, recovering=false, hostReady=false, peerRetryTimer=null, hostRetryTimer=null, linkTimer=null, initialTimer=null;
   let peerRetryAt=0, hostRetryAt=0, linkDeadline=0, initialDeadline=0, peerAttempts=0, hostAttempts=0;
   const msg = text => $('message').textContent = text || '';
@@ -246,7 +246,7 @@
       else {const feet=Math.round(distance(position(),member.pos)*3.28084); state.textContent=feet<=rangeFeet?`● ${feet.toLocaleString('en-US')} FT AWAY`:`○ OUT OF RANGE`; if(feet>rangeFeet)state.classList.add('far');}
       row.append(avatar,info,state); $('roster').append(row);
     });
-    updateScreen(); enforceAudio();
+    updateScreen(); drainPendingCalls(); enforceAudio();
   }
   function broadcast() {
     // Member keys stay with the host: nobody else needs them.
@@ -336,6 +336,7 @@
     hostRetryTimer=setTimeout(retryHost,delay);
   }
   function closeCalls() {
+    Object.values(pendingCalls).forEach(entry=>{clearTimeout(entry.timer); try {entry.call.close();} catch (_) {}}); pendingCalls={};
     Object.values(calls).forEach(entry=>{try {entry.call.close();} catch (_) {}}); calls={};
   }
   function retryPeer() {
@@ -460,14 +461,36 @@
       if(entry.outgoing && (!held || floor!==selfId || !inRange(position(),roster[id]?.pos))) {entry.call.close(); delete calls[id];}
     });
   }
-  function incoming(call) {
+  function acceptIncoming(call) {
     const id=call.peer;
-    if(!active || floor!==id || !inRange(position(),roster[id]?.pos)) {call.close(); return;}
-    call.answer(); const audio=document.createElement('audio'); audio.autoplay=true; audio.playsInline=true;
+    if(calls[id]) {const previous=calls[id]; delete calls[id]; previous.audio?.remove(); previous.call.close();}
+    const audio=document.createElement('audio'); audio.autoplay=true; audio.playsInline=true; audio.muted=true;
     calls[id]={call,audio,outgoing:false};
     call.on('stream',stream=>{audio.srcObject=stream; if(calls[id]?.call===call) calls[id].analyser=analyserFor(stream); enforceAudio(); audio.play().catch(()=>msg('Tap anywhere on the page to enable incoming audio.'));});
     call.on('close',()=>{audio.remove(); if(calls[id]?.call===call) delete calls[id];});
     call.on('error',()=>{audio.remove(); if(calls[id]?.call===call) delete calls[id];});
+    call.answer();
+  }
+  function drainPendingCalls() {
+    Object.entries(pendingCalls).forEach(([id,entry])=>{
+      const allowed=active && !recovering && floor===id && inRange(position(),roster[id]?.pos);
+      if(!allowed && active && !recovering && roster[id] && Date.now()<entry.deadline) return;
+      clearTimeout(entry.timer); delete pendingCalls[id];
+      if(allowed) acceptIncoming(entry.call); else entry.call.close();
+    });
+  }
+  function incoming(call) {
+    const id=call.peer;
+    if(!active || recovering || !roster[id]) {call.close(); return;}
+    if(pendingCalls[id]) {clearTimeout(pendingCalls[id].timer); pendingCalls[id].call.close(); delete pendingCalls[id];}
+    // Media offers use signaling; floor announcements use the data connection. They can arrive
+    // in either order. Wait briefly for the host's state instead of discarding an early offer.
+    // The call is not answered or played until both floor ownership and GPS range are verified.
+    const entry={call,deadline:Date.now()+8000,timer:setTimeout(drainPendingCalls,8000)};
+    pendingCalls[id]=entry;
+    const forgotten=()=>{if(pendingCalls[id]===entry) {clearTimeout(entry.timer); delete pendingCalls[id];}};
+    call.on('close',forgotten); call.on('error',forgotten);
+    drainPendingCalls();
   }
   function beginTransmit() {
     if(!held || !position()) {release(); return;}
@@ -519,7 +542,7 @@
   function cleanup() {
     wantsGroup=false; recovering=false; hostReady=false; clearRetryTimers();
     release(); active=false; if(nativeSession) { nativeSession=false; window.TrailRadioNative.stopRadioSession(); } document.body.classList.remove('is-connected'); clearInterval(locationTimer); if(watchId!=null) navigator.geolocation.clearWatch(watchId); watchId=null;
-    Object.values(calls).forEach(x=>x.call.close()); calls={}; localStream?.getTracks().forEach(t=>t.stop()); localStream=null; localAnalyser=null;
+    closeCalls(); localStream?.getTracks().forEach(t=>t.stop()); localStream=null; localAnalyser=null;
     const oldPeer=peer; peer=null; hostConn=null; connections={}; roster={}; floor=null; lastPosition=null; selfId=null; oldPeer?.destroy();
     $('setup').hidden=false; $('connected').hidden=true; $('crew-details').hidden=true; $('crew-details').open=false; $('start').disabled=false; rejoinRoom=null; updateScreen(); showRecent();
   }

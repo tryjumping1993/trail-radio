@@ -6,13 +6,13 @@
   document.documentElement?.classList?.add('theme-'+theme);
   document.querySelector?.('meta[name="theme-color"]')?.setAttribute('content',THEMES[theme]);
   try {window.TrailRadioNative?.setBackdrop?.(theme);} catch (_) {}
-  // Talk range in feet: the host picks it (up to a mile) and shares it with the group.
+  // Talk range in feet: the host picks it (up to five miles) and shares it with the group.
   // A position counts for five minutes: a phone standing still (or indoors) may get no new fix
   // for a while, and a stale position would silently keep its owner out of every call.
-  const DEFAULT_RANGE_FT = 1500, MIN_RANGE_FT = 100, MAX_RANGE_FT = 5280, FRESH = 5*60*1000;
+  const DEFAULT_RANGE_FT = 1500, MIN_RANGE_FT = 100, MAX_RANGE_FT = 5*5280, FRESH = 5*60*1000;
   let rangeFeet = DEFAULT_RANGE_FT;
   const cleanRange = v => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.min(MAX_RANGE_FT, Math.max(MIN_RANGE_FT, n)) : DEFAULT_RANGE_FT; };
-  const rangeLabel = ft => ft === 5280 ? '1 MILE' : ft === 2640 ? '½ MILE' : ft === 3960 ? '¾ MILE' : `${ft.toLocaleString('en-US')} FT`;
+  const rangeLabel = ft => ft >= 5280 && ft % 5280 === 0 ? `${ft / 5280} MILE${ft === 5280 ? '' : 'S'}` : ft === 2640 ? '½ MILE' : ft === 3960 ? '¾ MILE' : `${ft.toLocaleString('en-US')} FT`;
   let mode = new URL(location.href).searchParams.has('room') ? 'join' : 'host';
   let peer, hostConn, localStream, watchId, roomId, selfId, selfName, groupName, isHost = false;
   let roster = {}, connections = {}, calls = {}, floor = null, held = false, active = false, nativeSession = false, lastPosition = null, locationTimer, holdTimer;

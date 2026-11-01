@@ -142,9 +142,27 @@ async function createScenario(mode, range='1500', saved=new Map()) {
   const rl=rp.links[0]; rl.open=true;
   const state=range=>rl.emit('data',{type:'state',groupName:'Crew',floor:null,range,roster:{[rp.id]:{name:'Sunny',pos:{lat:1,lon:1,time:100000},host:false}}});
   state(5280); assert.equal(ranged.get('range-tag').textContent,'◉ 1 MILE RANGE','guests use the host range');
-  state(99999); assert.equal(ranged.get('range-tag').textContent,'◉ 1 MILE RANGE','the range never exceeds a mile');
+  for(let miles=2;miles<=5;miles++) {
+    state(miles*5280); assert.equal(ranged.get('range-tag').textContent,`◉ ${miles} MILES RANGE`,'guests use extended host ranges');
+  }
+  state(99999); assert.equal(ranged.get('range-tag').textContent,'◉ 5 MILES RANGE','the range never exceeds five miles');
   state(undefined); assert.equal(ranged.get('range-tag').textContent,'◉ 1,500 FT RANGE','older hosts keep 1,500 ft');
   ranged.get('leave').onclick();
+  // Audio recipients are selected by their distance from the speaker, up to five miles.
+  const extended=await createScenario('host','26400');
+  const ep=extended.peers[0]; ep.opened(); const recipients=[];
+  ep.call=id=>{recipients.push(id); return {on(){},close(){}};};
+  for(const [id,miles] of [['inside',4.99],['outside',5.01]]) {
+    const c=new (ep.connect('x').constructor)(id);
+    ep.emit('connection',c); c.open=true; c.emit('open'); c.emit('data',{type:'hello',name:id});
+    const lat=1+(miles*1609.344/6371000)*180/Math.PI;
+    c.emit('data',{type:'position',pos:{lat,lon:1,time:100000}});
+    assert.equal(c.sent.at(-1).range,26400,'the host broadcasts the five-mile range');
+  }
+  assert.equal(extended.get('range-tag').textContent,'◉ 5 MILES RANGE');
+  extended.get('talk').dispatch('pointerdown'); extended.advance(250);
+  assert.deepEqual(recipients,['inside'],'audio reaches a member just inside five miles, but not beyond');
+  extended.get('talk').dispatch('pointerup'); extended.get('leave').onclick();
   // A member who comes back on a new connection (switched apps, reloaded) is counted once.
   const dedupe=await createScenario('host');
   const dp=dedupe.peers[0]; dp.opened();
@@ -161,13 +179,13 @@ async function createScenario(mode, range='1500', saved=new Map()) {
 
   // Closing the app keeps the group offered for a rejoin; leaving removes it.
   const saved=new Map();
-  const before=await createScenario('host','2000',saved);
+  const before=await createScenario('host','26400',saved);
   before.peers[0].opened();
   const hostRoom=before.get('room-code').textContent;
   const later=await createScenario('join','1500',saved);
   assert.equal(later.get('rejoin').hidden,false,'a recent group is offered after a restart');
   const recent=JSON.parse(saved.get('trailRadioGroups'));
-  assert.equal(recent[0].room,hostRoom); assert.equal(recent[0].host,true); assert.equal(recent[0].range,2000);
+  assert.equal(recent[0].room,hostRoom); assert.equal(recent[0].host,true); assert.equal(recent[0].range,26400);
   later.get('leave').onclick();
   const rehost=await createScenario('host','1500',saved);
   rehost.peers[0].opened(); rehost.get('leave').onclick();
@@ -177,7 +195,7 @@ async function createScenario(mode, range='1500', saved=new Map()) {
   offered[0].onclick(); await new Promise(r=>setImmediate(r));
   assert.equal(rehost.peers.at(-1).id,hostRoom,'a host rejoins with the same group code');
   rehost.peers.at(-1).opened();
-  assert.equal(rehost.get('range-tag').textContent,'◉ 2,000 FT RANGE','with the same range');
+  assert.equal(rehost.get('range-tag').textContent,'◉ 5 MILES RANGE','with the same five-mile range');
   rehost.get('leave').onclick();
   assert.equal(JSON.parse(saved.get('trailRadioGroups')).length,0,'leaving forgets the group');
   // Five quick presses switch the map flag; it reaches the host and the group's state.

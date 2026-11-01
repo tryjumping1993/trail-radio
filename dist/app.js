@@ -597,11 +597,11 @@
   const DINO_FRAMES=[[...DINO_TOP,'...gg...gg....','...dd...dd....'],[...DINO_TOP,'....gg.gg.....','....dd.dd.....']];
   const CAT_TOP=['.........o.o','o........ooo','o........oko','.o.ooooooooo','..oooooooo..','..oooooooo..'];
   const CAT_FRAMES=[[...CAT_TOP,'..o.o..o.o..','..o.o..o.o..'],[...CAT_TOP,'...o.o..o.o.','..o...o...o.']];
+  const DINO_COLORS=[['#7fa35b','#4f7038'],['#9bb7c4','#5f8494'],['#a98bc4','#7a5f96'],['#e3a15c','#b0733a'],['#e7a0a8','#b8707a'],['#6fb3a4','#3f8476']];
+  const CAT_COLORS=[['#d9894a','#263e34'],['#7d8178','#f9f7e8'],['#3a3a3a','#eac273'],['#f4f1e6','#263e34'],['#a5795a','#263e34'],['#e8d3a8','#263e34']];
   const CRITTERS=[
-    {frames:DINO_FRAMES,palette:{g:'#7fa35b',d:'#4f7038',k:'#263e34'},speed:16},
-    {frames:CAT_FRAMES,palette:{o:'#d9894a',k:'#263e34'},speed:22},
-    {frames:DINO_FRAMES,palette:{g:'#9bb7c4',d:'#5f8494',k:'#263e34'},speed:13},
-    {frames:CAT_FRAMES,palette:{o:'#7d8178',k:'#f9f7e8'},speed:19},
+    ...DINO_COLORS.map(([g,d],i)=>({frames:DINO_FRAMES,palette:{g,d,k:'#263e34'},speed:12+i*2})),
+    ...CAT_COLORS.map(([o,k],i)=>({frames:CAT_FRAMES,palette:{o,k},speed:17+i*1.5})),
   ];
   // Draws `rows` with its top-left at device pixel (x, y), `px` device pixels per art pixel.
   function drawSprite(ctx,rows,palette,x,y,px,flip) {
@@ -639,9 +639,9 @@
     drawSprite(ctx,HIKER.frames[frame],HIKER.palette,-Math.round(sw/2),-sh+px,px,false);
   }
 
-  // Cats and dinosaurs wander the page background, behind the cards: each walks to a random
-  // spot, stands a while, and picks another.
-  const critters=CRITTERS.map((kind,i)=>({...kind,x:40+i*70,y:120+i*160,tx:null,ty:null,wait:i,facing:i%2?-1:1,step:0}));
+  // Cats and dinosaurs wander over the whole screen, above everything but never catching a tap:
+  // each walks to a random spot, stands a while, and picks another.
+  const critters=CRITTERS.map((kind,i)=>({...kind,x:20+(i*97)%320,y:60+(i*137)%640,tx:null,ty:null,wait:(i%5)*0.6,facing:i%2?-1:1,step:0}));
   let critterLast=0;
   function drawCritters(now) {
     const canvas=$('critters'); if(!canvas?.getContext) return;

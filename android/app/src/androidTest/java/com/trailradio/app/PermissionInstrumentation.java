@@ -77,6 +77,7 @@ public final class PermissionInstrumentation extends Instrumentation {
         }
         throw new AssertionError("Timed out: " + script + " => " + value);
     }
+    private int idleSeconds() { try { return Math.max(0, Integer.parseInt(arguments.getString("idle", "0"))); } catch (RuntimeException e) { return 0; } }
     private void backgroundPeerTest(Activity activity, WebView web, String role, Bundle result) throws Exception {
         String room = arguments.getString("room", "");
         boolean hostRole = role.startsWith("host"), clientRole = role.startsWith("client"), injectDisconnect = role.endsWith("reconnect");
@@ -112,7 +113,7 @@ public final class PermissionInstrumentation extends Instrumentation {
             if (power.isInteractive()) throw new AssertionError("Screen was not turned off for background test");
             if (RadioService.current() == null) throw new AssertionError("Foreground service stopped while screen was off");
             Bundle listening = new Bundle(); listening.putString("phase", "host-listening"); listening.putString("room", room); sendStatus(1, listening);
-            waitFor(activity, web, "window.__audioPlays > 0", "true", 45);
+            waitFor(activity, web, "window.__audioPlays > 0", "true", 45 + idleSeconds());
             if (!"false".equals(eval(activity, web, "document.getElementById('connected').hidden"))) throw new AssertionError("Host left the group while backgrounded");
             result.putString("result", "PASS: screen-off host stayed in the group and played incoming audio");
         } else {
@@ -124,6 +125,8 @@ public final class PermissionInstrumentation extends Instrumentation {
                 Thread.sleep(20000);
                 waitFor(activity, web, "window.__socketCount >= 2", "true", 20);
             } else Thread.sleep(40000);
+            // A long quiet spell before talking (the "idle" argument, in seconds).
+            Thread.sleep(idleSeconds() * 1000L);
             android.os.PowerManager power = (android.os.PowerManager) activity.getSystemService(Activity.POWER_SERVICE);
             if (power.isInteractive()) throw new AssertionError("Screen was not turned off for client test");
             waitFor(activity, web, "document.getElementById('talk').disabled", "false", 25);

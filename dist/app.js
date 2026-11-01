@@ -7,7 +7,9 @@
   document.querySelector?.('meta[name="theme-color"]')?.setAttribute('content',THEMES[theme]);
   try {window.TrailRadioNative?.setBackdrop?.(theme);} catch (_) {}
   // Talk range in feet: the host picks it (up to a mile) and shares it with the group.
-  const DEFAULT_RANGE_FT = 1500, MIN_RANGE_FT = 100, MAX_RANGE_FT = 5280, FRESH = 30000;
+  // A position counts for five minutes: a phone standing still (or indoors) may get no new fix
+  // for a while, and a stale position would silently keep its owner out of every call.
+  const DEFAULT_RANGE_FT = 1500, MIN_RANGE_FT = 100, MAX_RANGE_FT = 5280, FRESH = 5*60*1000;
   let rangeFeet = DEFAULT_RANGE_FT;
   const cleanRange = v => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.min(MAX_RANGE_FT, Math.max(MIN_RANGE_FT, n)) : DEFAULT_RANGE_FT; };
   const rangeLabel = ft => ft === 5280 ? '1 MILE' : ft === 2640 ? '½ MILE' : ft === 3960 ? '¾ MILE' : `${ft.toLocaleString('en-US')} FT`;
@@ -410,6 +412,9 @@
     // PeerJS 1.5.5's public socket sends this same heartbeat; native ticks are not throttled like hidden-page timers.
     try {if(peer?.open && !peer.disconnected && peer.socket?.send) peer.socket.send({type:'HEARTBEAT'});} catch (_) {}
     if(linkDeadline && Date.now()>=linkDeadline) expireHostLink();
+    // Hidden pages run their own timers about once a minute after a few minutes: the group's
+    // positions are kept current from here instead.
+    if(active && !recovering) sendPosition();
     if(peerRetryTimer && Date.now()>=peerRetryAt) retryPeer();
     if(hostRetryTimer && Date.now()>=hostRetryAt) retryHost();
   };

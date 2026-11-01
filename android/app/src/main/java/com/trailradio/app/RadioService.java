@@ -131,7 +131,7 @@ public final class RadioService extends Service {
         boolean fine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
         boolean coarse = checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
         if (!fine && !coarse) return;
-        for (String provider : new String[]{LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER}) {
+        for (String provider : new String[]{LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER}) {
             if (LocationManager.GPS_PROVIDER.equals(provider) && !fine) continue;
             try {
                 if (!locations.isProviderEnabled(provider)) continue;
@@ -143,7 +143,7 @@ public final class RadioService extends Service {
     private void deliver(Location location) {
         if (location == null) return;
         long now = System.currentTimeMillis(), age = now - location.getTime();
-        if (age < -5000 || age > 30000) return;
+        if (age < -5000 || age > 120000) return;
         if (lastLocation != null && location.getTime() < lastLocation.getTime()) return;
         if (lastLocation != null && now - lastLocation.getTime() < 20000 && location.hasAccuracy() && lastLocation.hasAccuracy() && location.getAccuracy() > lastLocation.getAccuracy() * 2) return;
         lastLocation = location;

@@ -49,6 +49,9 @@ final class RadioRuntime {
         web.getSettings().setDomStorageEnabled(true);
         web.getSettings().setGeolocationEnabled(true);
         web.getSettings().setMediaPlaybackRequiresUserGesture(false);
+        // The page is the radio: keep its renderer as important as the app while a group runs
+        // in the background, not only while it is on screen.
+        web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
         web.addJavascriptInterface(new Bridge(), "TrailRadioNative");
         web.setWebViewClient(new WebViewClient() {
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
@@ -60,6 +63,10 @@ final class RadioRuntime {
                 String type = path.endsWith(".html") ? "text/html" : path.endsWith(".css") ? "text/css" : path.endsWith(".json") ? "application/json" : "text/javascript";
                 try { return new WebResourceResponse(type, "UTF-8", app.getAssets().open(path.substring(1))); }
                 catch (IOException e) { return new WebResourceResponse("text/plain", "UTF-8", null); }
+            }
+            @Override public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+                rendererGone();
+                return true;
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 if ("trailradio.local".equals(request.getUrl().getHost())) return false;
@@ -137,6 +144,30 @@ final class RadioRuntime {
     void networkAvailable() { main.post(() -> { if (sessionRequested) execute("window.radioNetworkAvailable && window.radioNetworkAvailable()"); }); }
     void phonePermissionResult(boolean ok) { execute("window.trailRadioPermissionResult && window.trailRadioPermissionResult(" + ok + ")"); }
     private void execute(String script) { main.post(() -> { if (instance == this) web.evaluateJavascript(script, null); }); }
+    /**
+     * The page's renderer is gone (the system reclaimed it or it crashed); this WebView cannot
+     * be used again. The session ends: on screen the app starts over (the group is offered for
+     * a rejoin), in the background a notification says so and opens the app.
+     */
+    private void rendererGone() {
+        if (instance != this) return;
+        boolean hadSession = sessionRequested;
+        sessionRequested = false; connected = false;
+        instance = null;
+        if (web.getParent() instanceof ViewGroup) ((ViewGroup) web.getParent()).removeView(web);
+        web.destroy();
+        app.stopService(new Intent(app, RadioService.class));
+        MainActivity host = activity.get();
+        if (host != null) { host.recreate(); return; }
+        if (!hadSession) return;
+        android.app.NotificationManager notifications = (android.app.NotificationManager) app.getSystemService(Context.NOTIFICATION_SERVICE);
+        notifications.createNotificationChannel(new android.app.NotificationChannel("radio_stopped", "Radio stopped", android.app.NotificationManager.IMPORTANCE_DEFAULT));
+        Intent open = new Intent(app, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        android.app.PendingIntent tap = android.app.PendingIntent.getActivity(app, 2, open, android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+        notifications.notify(1102, new android.app.Notification.Builder(app, "radio_stopped").setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentTitle("Big Walk Radio stopped").setContentText("Android closed the radio in the background. Tap to rejoin your group.")
+            .setContentIntent(tap).setAutoCancel(true).build());
+    }
     private void dispose() {
         if (instance != this || sessionRequested || activity.get() != null) return;
         web.removeJavascriptInterface("TrailRadioNative");
